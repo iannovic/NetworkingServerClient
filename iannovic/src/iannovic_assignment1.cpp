@@ -149,12 +149,11 @@ int main(int argc, char **argv)
 			FD_ZERO(&wfds);
 			FD_SET(0,&rfds); 	//read on stdin to see when it has input
 			cout << "waiting for input" << endl;
-			if (select(2,&rfds,NULL,NULL,NULL) == -1)
+			if (select(1,&rfds,NULL,NULL,NULL) == -1)
 			{
 				cout << "failed to select: " << strerror(errno) << endl;
 				return -1;
 			}
-			cout <<"found some input" << endl;
 			char buf[1024] = {0};
 			if (FD_ISSET(0,&rfds))
 			{
@@ -177,7 +176,7 @@ int main(int argc, char **argv)
 				{
 					size_t len = 7;
 					char buf[8] = "message";
-					if (-1 == send(ip_list->fd,buf,len,0))
+					if (-1 == write(ip_list->fd,buf,len))
 					{
 						cout << "failed to send: " << strerror(errno) << endl;
 					}
@@ -242,16 +241,6 @@ int initServer()
 		return -1;
 	}
 	
-	/*
-		open a new socket and return the FD
-	*/
-
-	/*
-	cout << response->ai_family << endl;
-	cout << response->ai_socktype << endl;
-	cout << response ->ai_protocol << endl;
-    fd = socket(response->ai_family,response->ai_socktype,response->ai_protocol);
-	*/
 	fd = socket(AF_INET,SOCK_STREAM,0);
 	if (fd == -1)
 	{
@@ -259,18 +248,12 @@ int initServer()
 		return -1;
 	}
 
-	/*
-		name the socket and bind it
-	*/
 	if (bind(fd,response->ai_addr,response->ai_addrlen) != 0)
 	{
 		cout << "failed to bind socket to port: " << strerror(errno) << endl;
 		return -1;
 	}
 
-	/*
-		tell the socket to start listening for connections
-	*/
 	if (listen(fd,10) != 0)
 	{
 		cout << "failed to listen on socket" << strerror(errno) << endl;
@@ -285,6 +268,7 @@ int initServer()
 	ip_list->addr = response->ai_addr;
 	ip_list->next = NULL;
 	ip_list->id = 1;
+	cout << "listening socket is fd:" << ip_list->fd << endl;
 	cout << "server successfully started" << endl;
 	return fd;	
 }
@@ -313,24 +297,7 @@ int runServer()
 	/*
 	 * need to insert every fd into the read_set and write_set if necessary
 	 */
-
-	/*
-	 * RETURN THE FD
-	 */
-
 	int fd1 = blockAndAccept();
-/*
-	int flags = 0;
-	flags = fcntl(fd1,F_GETFL,0);
-	fcntl(fd1,F_SETFL, flags | O_NONBLOCK);
-*/
-/*
-	int fd2= blockAndAccept();
-	flags = 0;
-	flags = fcntl(fd2,F_GETFL,0);
-	fcntl(fd2,F_SETFL, flags | O_NONBLOCK);
-*/
-
 	while (true)
 	{
 		cout << "one connection was made, looping for eternity" << endl;
@@ -347,16 +314,27 @@ int runServer()
 		*/
 		FD_ZERO(&rfds);
 		FD_SET(fd1,&rfds);
+
+		cout << ip_list->fd << endl;
+		FD_SET(ip_list->fd,&rfds);
 		//FD_SET(ip_list->fd,&rfds);
 
 		FD_ZERO(&wfds);
 		FD_SET(fd1,&wfds);
-		//FD_SET(fd2,&rfds);
+		//FD_SET(ip_list->fd,&rfds);
 		cout << "selecting.." << endl;
-		status = select(2,&rfds,&wfds,NULL,NULL);
+		status = select(1024,&rfds,NULL,NULL,NULL);
 		if (status <= 0)
 		{
 			cout << "error while calling select: " << strerror(errno) << endl;
+		}
+		if (FD_ISSET(fd1,&rfds))
+		{
+			cout << "got a message" << endl;
+		}
+		if (FD_ISSET(ip_list->fd,&rfds))
+		{
+			cout << "there is a new message" << endl;
 		}
 		cout << "made it through select()" << endl;
 		/*
@@ -373,30 +351,32 @@ int runServer()
 		}
 		*/
 	}
-	/*
-	char buf[1024] = {0};
-	size_t t;
-	ssize_t t2;
-	while((t2 = recv(newfd,buf,1024,0)) != -1)
+	cout << "starting to constantly call recieve...." << endl;
+	while (true)
 	{
-		cout << "this was the number of bytes returned: " << t2 << endl;
-		cout << "this is my buffer: " << buf << endl;
-		if (strncmp(buf,"exit",4) == 0)
+		char buf[1024] = {0};
+		size_t t;
+		ssize_t t2;
+		while((t2 = recv(fd1,buf,1024,0)) != -1)
 		{
-			if (shutdown(newfd,0) < 0)
+			cout << "incoming message: " << buf << endl;
+			if (strncmp(buf,"exit",4) == 0)
 			{
-				cout << "Failed to close socket" << endl;
+				if (shutdown(fd1,0) < 0)
+				{
+					cout << "Failed to close socket" << endl;
+				}
+				else
+				{
+					cout << "closed the socket" << endl;
+				}
+				break;
 			}
-			else
-			{
-				cout << "closed the socket" << endl;
-			}
-			break;
+			send(fd1,"got",3,0);
 		}
-		send(newfd,"got",3,0);
 	}
 
-*/
+
 
 	if (false)
 	{
