@@ -29,6 +29,7 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <sys/fcntl.h>
+#include <unistd.h>
 #include <errno.h>
 #include "../include/global.h"
 
@@ -51,6 +52,9 @@ int initServer();
 //run that server
 int runServer();
 int blockAndAccept();
+
+//run that client
+int connectToServer();
 /*
  * return the tail of the linkedlist
  */
@@ -75,7 +79,7 @@ int createRfds(fd_set *rfds,int *nfds);
 
 char *port_number;
 struct node* ip_list;	
-
+const char* host_address = NULL;
 using namespace std;
 
 /**
@@ -131,37 +135,70 @@ int main(int argc, char **argv)
 			}
 		}
 	} 
-	
-	//	main shell loop
-	
-        for (std::string line; std::getline(std::cin, line);)
-        {
-                if (line.compare("myport") == 0)
-                {
-                        printPort();
-                }
-                else if (line.compare("creator") == 0)
-                {
-                        printCreator();
-                }
-                else if (line.compare("help") == 0)
-                {
-                        printHelp();
-                }
-                else if (line.compare("socket") == 0)
-                {
-			
-                }
-		else if ((line.compare("bye") == 0) || (line.compare("quit") == 0))
+	else if (strcmp(argv[1],"c") == 0)
+	{
+		if (connectToServer() == -1)
 		{
-			cout << "gracefully closing the program" << endl;
+			cout << "connectToServer() failed" << endl;
 			return -1;
 		}
-                else
-                {
-                        cout << "invalid command, type 'help' if you need, help." << endl;
-                }
+		while (true)
+		{
+			fd_set rfds, wfds;
+			FD_ZERO(&rfds);
+			FD_ZERO(&wfds);
+			FD_SET(0,&rfds); 	//read on stdin to see when it has input
+			cout << "waiting for input" << endl;
+			if (select(2,&rfds,NULL,NULL,NULL) == -1)
+			{
+				cout << "failed to select: " << strerror(errno) << endl;
+				return -1;
+			}
+			cout <<"found some input" << endl;
+			char buf[1024] = {0};
+			if (FD_ISSET(0,&rfds))
+			{
+				std::string line;
+				std::getline(std::cin,line);
+
+				if (line.compare("myport") == 0)
+				{
+					printPort();
+				}
+				else if (line.compare("creator") == 0)
+				{
+						printCreator();
+				}
+				else if (line.compare("help") == 0)
+				{
+						printHelp();
+				}
+				else if (line.compare("send") == 0)
+				{
+					size_t len = 7;
+					char buf[8] = "message";
+					if (-1 == send(ip_list->fd,buf,len,0))
+					{
+						cout << "failed to send: " << strerror(errno) << endl;
+					}
+					else
+					{
+						cout << "message sent!" << endl;
+					}
+				}
+				else if ((line.compare("bye") == 0) || (line.compare("quit") == 0))
+				{
+					cout << "gracefully closing the program" << endl;
+					return -1;
+				}
+				else
+				{
+						cout << "invalid command, type 'help' if you need, help." << endl;
+				}
+			}
+		}
 	}
+	//	main shell loop
 	return 0;
 }
 
@@ -282,10 +319,11 @@ int runServer()
 	 */
 
 	int fd1 = blockAndAccept();
+/*
 	int flags = 0;
 	flags = fcntl(fd1,F_GETFL,0);
 	fcntl(fd1,F_SETFL, flags | O_NONBLOCK);
-
+*/
 /*
 	int fd2= blockAndAccept();
 	flags = 0;
@@ -295,12 +333,8 @@ int runServer()
 
 	while (true)
 	{
-		cout << "two connections were made, looping for eternity" << endl;
-		/*
-		struct timeval tv;
-		tv.tv_sec = 20;
-		tv.tv_usec = 0;
-		*/
+		cout << "one connection was made, looping for eternity" << endl;
+
 		int nfds = 0;
 		fd_set rfds;
 		fd_set wfds;
@@ -410,14 +444,52 @@ int runServer()
 }	
 int connectToServer()
 {
+	cout << "now initializing client..." << endl;
+	struct addrinfo hints, *response;
+
+	int fd = 0;
+	memset(&hints,0, sizeof hints);
+
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE;
+
 	/*
-	 * getaddrinfo()
-	 * call socket()
-	 * call connect()
-	 *
-	 */
+		get the address info
+	*/
+	if (getaddrinfo(host_address,port_number,&hints,&response) != 0)
+	{
+		cout << "failed to get addr info: " << strerror(errno) << endl;
+		return -1;
+	}
+
+	/*
+		open a new socket and return the FD
+	*/
+	fd = socket(response->ai_family,response->ai_socktype,response->ai_protocol);
+	if (fd == -1)
+	{
+		cout << "failed to open a socket: " << strerror(errno) << endl;
+		return -1;
+	}
+
+	if (connect(fd,response->ai_addr,response->ai_addrlen) == -1)
+	{
+		cout << "failed to connect to server socket: " << strerror(errno) << endl;
+		return -1;
+	}
+	//free(hints); this line isn't working for me, but i'm leaking now
+	ip_list = new struct node;
+
+	//init the first node of the ip list to be the server
+	ip_list->fd = fd;
+	ip_list->addr = response->ai_addr;
+	ip_list->next = NULL;
+	ip_list->id = 1;
+	cout << "connected to server!" << endl;
 	return 0;
 }
+
 int insertNode(struct node* head,struct node* newNode)
 {
 	struct node **tail;
@@ -498,14 +570,13 @@ int blockAndAccept()
 	newfd = accept(ip_list->fd,newaddr,&length);
 	if (newfd == -1)
 	{
-
 		cout << "accepting the new connection failed: " << strerror(errno) << endl;
 		return -1;
-
 	}
 	else
 	{
 		cout << "accepting a new connection" << endl;
+
 		/*
 		 * CREATE NEW CONNECTION NODE WITH THE FD
 		 */
