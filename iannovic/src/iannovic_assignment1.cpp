@@ -72,13 +72,14 @@ struct node
 };
 int getTail(struct node* head, struct node** ret);
 int insertNode(struct node* head,struct node* newNode);
-int createRfds(fd_set *rfds,int *nfds);
+int createRfds(fd_set *rfds);
 /*
  * END OF LINKED LIST STUFF
  */
 
 char *port_number;
 struct node* ip_list;	
+struct node* ip_tail;
 const char* host_address = NULL;
 using namespace std;
 
@@ -268,6 +269,7 @@ int initServer()
 	ip_list->addr = response->ai_addr;
 	ip_list->next = NULL;
 	ip_list->id = 1;
+	ip_tail = ip_list;
 	cout << "listening socket is fd:" << ip_list->fd << endl;
 	cout << "server successfully started" << endl;
 	return fd;	
@@ -292,134 +294,54 @@ int runServer()
 			return -1;
 		}
 	}
-	int status = 0;
-	//add sin to set
-	/*
-	 * need to insert every fd into the read_set and write_set if necessary
-	 */
-	int fd1 = blockAndAccept();
-	while (true)
-	{
-		cout << "one connection was made, looping for eternity" << endl;
 
-		int nfds = 0;
+//	int fd1 = blockAndAccept();
+		int nfds = 1024;
 		fd_set rfds;
 		fd_set wfds;
-		/*
-		if (createRfds(&rfds,&nfds))
+		if (createRfds(&rfds))
 		{
 			cout << "failed to create rdfs" << endl;
 			return -1;
 		}
-		*/
-		FD_ZERO(&rfds);
-		FD_SET(fd1,&rfds);
-
-		cout << ip_list->fd << endl;
-		FD_SET(ip_list->fd,&rfds);
-		//FD_SET(ip_list->fd,&rfds);
-
-		FD_ZERO(&wfds);
-		FD_SET(fd1,&wfds);
-		//FD_SET(ip_list->fd,&rfds);
-		cout << "selecting.." << endl;
-		status = select(1024,&rfds,NULL,NULL,NULL);
-		if (status <= 0)
+		cout <<"selecting..." << endl;
+		if (-1 == select(nfds,&rfds,NULL,NULL,NULL))
 		{
 			cout << "error while calling select: " << strerror(errno) << endl;
+			return -1;
 		}
-		if (FD_ISSET(fd1,&rfds))
-		{
-			cout << "got a message" << endl;
-		}
+		cout<<"something was selected." << endl;
 		if (FD_ISSET(ip_list->fd,&rfds))
 		{
-			cout << "there is a new message" << endl;
-		}
-		cout << "made it through select()" << endl;
-		/*
-		 * SEND A MESSAGE BACK SAYING THAT I RECIEVED YOUR MESSAGE
-		 */
-		struct node* head = ip_list->next;
-		/*
-		while (head != NULL)
-		{
-			if (FD_ISSET(head->fd,&rfds))
+			if (-1 == blockAndAccept())
 			{
-				send(head->fd,"got it",6,0);
+				cout << "failed to accept" << endl;
+				return -1;
+			}
+			else
+			{
+				cout << "new connection accepted!" << endl;
 			}
 		}
-		*/
-	}
-	cout << "starting to constantly call recieve...." << endl;
-	while (true)
-	{
-		char buf[1024] = {0};
-		size_t t;
-		ssize_t t2;
-		while((t2 = recv(fd1,buf,1024,0)) != -1)
+		if (ip_list->next != NULL)
 		{
-			cout << "incoming message: " << buf << endl;
-			if (strncmp(buf,"exit",4) == 0)
+			struct node* head = ip_list->next;
+			while (head != NULL)
 			{
-				if (shutdown(fd1,0) < 0)
+				if (FD_ISSET(head->fd,&rfds))
 				{
-					cout << "Failed to close socket" << endl;
+					char buf[1024] = {0};
+					size_t t;
+					ssize_t t2;
+					t2 = recv(head->fd,buf,1024,0);
+					if (t2 != -1)
+					{
+						cout << "got a message: " << buf << endl;
+					}
 				}
-				else
-				{
-					cout << "closed the socket" << endl;
-				}
-				break;
+				head = head->next;
 			}
-			send(fd1,"got",3,0);
 		}
-	}
-
-
-
-	if (false)
-	{
-		cout << "somebody connected" << endl;
-
-		int newfd = 0;
-		unsigned int length;
-		struct sockaddr *newaddr = new struct sockaddr;
-
-		/*
-		 * 		accept a new connect on the socket fd
-		 */
-		cout << "waiting to accept" << endl;
-		newfd = accept(ip_list->fd,newaddr,&length);
-		if (newfd == -1)
-		{
-			cout <<"accepting the new connection failed: " << strerror(errno) << endl;
-			return -1;
-		}
-		else
-		{
-			cout << "conection accepted" << endl;
-		}
-
-		/*
-		 * 	Create a new node and insert at the end of the linked list
-		 */
-		struct node *newNode = new struct node;
-		newNode->fd = newfd;
-		newNode->addr = newaddr;
-		newNode->next = NULL;
-		status = insertNode(ip_list,newNode);
-		if (status)
-		{
-			cout << "failed to insert new node into the linked list" << endl;
-			return -1;
-		}
-
-	}
-	else
-	{
-		//cout << "connection timed out, nobody connected" << endl;
-	}
 	return 0;
 }	
 int connectToServer()
@@ -453,6 +375,8 @@ int connectToServer()
 		return -1;
 	}
 
+	cout << "this is your ai_addr:" << response->ai_addr->sa_data << endl;
+	cout << "this is your addrlen:" << response->ai_addrlen << endl;
 	if (connect(fd,response->ai_addr,response->ai_addrlen) == -1)
 	{
 		cout << "failed to connect to server socket: " << strerror(errno) << endl;
@@ -472,25 +396,26 @@ int connectToServer()
 
 int insertNode(struct node* head,struct node* newNode)
 {
-	struct node **tail;
-	struct node *t = NULL;
+	struct node *tail;
 	int status = 0;
 	cout << "beginning to insert" << endl;
-	status = getTail(head,tail);
-	if (status)
+	if (getTail(head,&tail) == -1  || tail == NULL)
 	{
 		cout << "failed to get tail" << endl;
 		return -1;
 	}
-
 	/*
 	 * get the value of tail in t then add the new node
 	 */
-	t = *tail;
-	t->next = newNode;
+	cout << "blah tail:" << tail << endl;
 
+//	tail->id++;
+	tail->next = newNode;
+	cout << "lol"<< tail->id << endl;
+	newNode->id = tail->id;
+	cout << "lolz" << endl;
 	//increment the ID of the new connection node
-	newNode->id = t->id++;
+
 	cout << "insert complete" << endl;
 	return 0;
 }
@@ -517,7 +442,7 @@ int getTail(struct node* head,struct node **tail)
 	 * set return value
 	 */
 	tail = &head;
-	cout << "assigned the tail" << endl;
+	cout << "assigned the tail:" << *tail  << endl;
 
 	return 0;
 }
@@ -525,17 +450,15 @@ int getTail(struct node* head,struct node **tail)
 /*
  * LOAD all of the fd's of connections into the set
  */
-int createRfds(fd_set *rfds,int *nfds)
-{	*nfds = 0;
-	struct node *head = ip_list->next;
+int createRfds(fd_set *rfds)
+{
+	struct node *head = ip_list;
 	FD_ZERO(rfds);
-	/*
-	 *
-	 */
+
 	while (head != NULL)
 	{
 		FD_SET(head->fd,rfds);
-		*nfds += 1;
+		cout << "setting: " << head->fd << endl;
 		head = head->next;
 	}
 
@@ -545,9 +468,9 @@ int createRfds(fd_set *rfds,int *nfds)
 int blockAndAccept()
 {
 	int newfd;
-	unsigned int length;
 	struct sockaddr *newaddr = new struct sockaddr;
-	newfd = accept(ip_list->fd,newaddr,&length);
+	socklen_t addr_size = sizeof(struct sockaddr);
+	newfd = accept(ip_list->fd,newaddr,&addr_size);
 	if (newfd == -1)
 	{
 		cout << "accepting the new connection failed: " << strerror(errno) << endl;
@@ -564,11 +487,9 @@ int blockAndAccept()
 		newnode->fd = newfd;
 		newnode->addr = newaddr;
 		newnode->next = NULL;
-		if (insertNode(ip_list,newnode))
-		{
-			cout << "Failed to insert new node" << endl;
-			return -1;
-		}
+		newnode->id = ip_tail->id + 1;
+		ip_tail->next = newnode;
+		ip_tail = newnode;
 	}
 
 	return newfd;
