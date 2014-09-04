@@ -30,6 +30,7 @@
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 #include <errno.h>
 #include "../include/global.h"
 
@@ -42,17 +43,12 @@ void printCreator();
 //print the Help command
 void printHelp();
 
-//do socket stuff test
-int doSocket();
-
 //initialize the server
-int initServer();
-
+int initListen();
 
 //run that server
-int runServer();
 int blockAndAccept();
-
+int getPortAndIp(int fd);
 //run that client
 int connectToServer();
 /*
@@ -61,6 +57,7 @@ int connectToServer();
 
 /*
  * LINKED LIST STUFF
+ * the head of the list will always be the listening socket fd
  */
 
 struct node
@@ -78,9 +75,12 @@ int createRfds(fd_set *rfds);
  */
 
 char *port_number;
+char host_port_number[5] = "4545";
+
 struct node* ip_list;	
 struct node* ip_tail;
 const char* host_address = NULL;
+bool isClient;
 using namespace std;
 
 /**
@@ -92,109 +92,149 @@ using namespace std;
  */
 int main(int argc, char **argv)
 {
-     /*
-                VALIDATE ALL OF THE ARGUMENTS
-        */
-        if (argc != 3)
-        {
-                cout << argc << " is an illegal # of params" << endl;
-                cout << "there must be 3 args" << endl;
-                return -1;
-        }
+     /*         VALIDATE ALL OF THE ARGUMENTS		 */
+	if (argc != 3)
+	{
+			cout << argc << " is an illegal # of params" << endl;
+			cout << "there must be 3 args" << endl;
+			return -1;
+	}
 
-        port_number = argv[2];
-        if (strcmp(argv[1],"s") == 0)
-        {
-                cout << "running as server ";
-        }
-        else if (strcmp(argv[1],"c") == 0)
-        {
-                cout << "running as client ";
-        }
-        else
-        {
-                cout << "arg1 must be 'c'lient or 's'erver" << endl;
-                return 1;
-        }
-
-        // add some validation to make sure port is a number
-
-        // If server, initialize server.
-
+	port_number = argv[2];
 	if (strcmp(argv[1],"s") == 0)
 	{
-		while (true)
-		{	
-			if (runServer() == -1)
-			{
-				cout << "exiting program with error" << endl;
-				/*
-				 * CLOSE ALL OF THE SOCKET CONNECTIONS HERE EVENTUALLY IAN
-				 */
-				shutdown(ip_list->fd,0);
-				return -1;
-			}
-		}
-	} 
+			isClient = false;
+			cout << "running as server ";
+	}
 	else if (strcmp(argv[1],"c") == 0)
 	{
-		if (connectToServer() == -1)
+			isClient = true;
+			cout << "running as client ";
+	}
+	else
+	{
+			cout << "arg1 must be 'c'lient or 's'erver" << endl;
+			return 1;
+	}
+
+	/*
+	 * initiate the listening socket, both server and client
+	 */
+	if (initListen() == -1)
+	{
+		cout << "failed to open listening socket!" << endl;
+		return -1;
+	}
+
+	// add some validation to make sure port is a number
+	while (true)
+	{
+		fd_set rfds;
+		if (-1 == createRfds(&rfds))
 		{
-			cout << "connectToServer() failed" << endl;
+			cout << "failed to create the rfds" << endl;
 			return -1;
 		}
-		while (true)
-		{
-			fd_set rfds, wfds;
-			FD_ZERO(&rfds);
-			FD_ZERO(&wfds);
-			FD_SET(0,&rfds); 	//read on stdin to see when it has input
-			cout << "waiting for input" << endl;
-			if (select(1,&rfds,NULL,NULL,NULL) == -1)
-			{
-				cout << "failed to select: " << strerror(errno) << endl;
-				return -1;
-			}
-			char buf[1024] = {0};
-			if (FD_ISSET(0,&rfds))
-			{
-				std::string line;
-				std::getline(std::cin,line);
+		FD_SET(0,&rfds); 	//read on stdin to see when it has input
 
-				if (line.compare("myport") == 0)
+		cout << "waiting for input" << endl;
+		if (select(1024,&rfds,NULL,NULL,NULL) == -1)
+		{
+			cout << "failed to select: " << strerror(errno) << endl;
+			return -1;
+		}
+
+		/*
+		 * this will always be the listening socket, both client and server
+		 */
+		if (FD_ISSET(ip_list->fd,&rfds))
+		{
+			if (-1 == blockAndAccept())
+			{
+				cout << "failed to accept" << endl;
+			}
+			else
+			{
+				cout << "accepted a new connection!" << endl;
+			}
+		}
+
+		/*
+		 * check to see if anything needs to be read other than the stdin
+		 */
+		if (ip_list->next != NULL)
+		{
+			struct node* head = ip_list->next;
+			while (head != NULL)
+			{
+				cout << "coming from fd: " << head->fd << endl;
+				if (FD_ISSET(head->fd,&rfds))
 				{
-					printPort();
-				}
-				else if (line.compare("creator") == 0)
-				{
-						printCreator();
-				}
-				else if (line.compare("help") == 0)
-				{
-						printHelp();
-				}
-				else if (line.compare("send") == 0)
-				{
-					size_t len = 7;
-					char buf[8] = "message";
-					if (-1 == write(ip_list->fd,buf,len))
+					char buf[1024] = {0};
+					size_t t;
+					ssize_t t2;
+					t2 = recv(head->fd,buf,1024,0);
+					if (t2 != -1)
 					{
-						cout << "failed to send: " << strerror(errno) << endl;
-					}
-					else
-					{
-						cout << "message sent!" << endl;
+						cout << "got a message: " << buf << endl;
 					}
 				}
-				else if ((line.compare("bye") == 0) || (line.compare("quit") == 0))
+				head = head->next;
+			}
+		}
+
+		/*
+		 * check stdin
+		 */
+		if (FD_ISSET(0,&rfds))
+		{
+			std::string line;
+			std::getline(std::cin,line);
+
+			if (line.compare("myport") == 0)
+			{
+				printPort();
+			}
+			else if (line.compare("creator") == 0)
+			{
+					printCreator();
+			}
+			else if (line.compare("help") == 0)
+			{
+					printHelp();
+			}
+			else if (line.compare("send") == 0)
+			{
+				size_t len = 7;
+				char buf[8] = "message";
+				if (-1 == write(ip_list->fd,buf,len))
 				{
-					cout << "gracefully closing the program" << endl;
-					return -1;
+					cout << "failed to send: " << strerror(errno) << endl;
 				}
 				else
 				{
-						cout << "invalid command, type 'help' if you need, help." << endl;
+					cout << "message sent!" << endl;
 				}
+			}
+			else if (line.compare("register") == 0)
+			{
+				if (!isClient)
+				{
+					cout << "you are the server, silly. You can't register." << endl;
+				}
+				else
+				{
+					connectToServer();
+				}
+			}
+			else if ((line.compare("bye") == 0) || (line.compare("quit") == 0))
+			{
+				cout << "gracefully closing the program" << endl;
+				return -1;
+			}
+			else
+			{
+					cout << "invalid command, type 'help' if you need, help." << endl;
 			}
 		}
 	}
@@ -202,28 +242,9 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-void printPort()
+int initListen()
 {
-        cout << "listening on port " << port_number << endl;
-}
-
-void printCreator()
-{
-        cout << "Name: Ian Novickis" << endl;
-        cout << "UBIT: iannovic" << endl;
-        cout << "UBemail: iannovic@buffalo.edu" << endl;
-        cout << "I have read and understood the course academic integrity policy located at: " << endl;
-        cout << "http://www.cse.buffalo.edu/faculty/dimitrio/courses/cse4589_f14/index.html#intregrity" << endl;
-}
-
-void printHelp()
-{
-        cout << "print all the commands here, so that dumb people can see" << endl;
-}
-
-int initServer()
-{
-	cout << "now initializing server..." << endl;
+	cout << "now initializing the listening socket..." << endl;
 	struct addrinfo hints, *response;
 
 	int fd = 0;
@@ -235,7 +256,9 @@ int initServer()
 
 	/*
 		get the address info
+	/*
 	*/
+	cout << "listening port number: " <<port_number << endl;
 	if (getaddrinfo(NULL,port_number,&hints,&response) != 0)
 	{
 		cout << "failed to get addr info: " << strerror(errno) << endl;
@@ -274,76 +297,6 @@ int initServer()
 	cout << "server successfully started" << endl;
 	return fd;	
 }
-
-/*
-	safe to assume that the server socket fd is listen()ing at this point
-*/
-int runServer()
-{
-	/*
-	 * INITIALIZE THE SERVER IF IT HAS NOT BEEN YET =)
-	 */
-	if (ip_list == NULL)
-	{
-		if (initServer() == -1)
-		{
-			if (ip_list != NULL)
-			{
-				shutdown(ip_list->fd,0);
-			}
-			return -1;
-		}
-	}
-
-//	int fd1 = blockAndAccept();
-		int nfds = 1024;
-		fd_set rfds;
-		fd_set wfds;
-		if (createRfds(&rfds))
-		{
-			cout << "failed to create rdfs" << endl;
-			return -1;
-		}
-		cout <<"selecting..." << endl;
-		if (-1 == select(nfds,&rfds,NULL,NULL,NULL))
-		{
-			cout << "error while calling select: " << strerror(errno) << endl;
-			return -1;
-		}
-		cout<<"something was selected." << endl;
-		if (FD_ISSET(ip_list->fd,&rfds))
-		{
-			if (-1 == blockAndAccept())
-			{
-				cout << "failed to accept" << endl;
-				return -1;
-			}
-			else
-			{
-				cout << "new connection accepted!" << endl;
-			}
-		}
-		if (ip_list->next != NULL)
-		{
-			struct node* head = ip_list->next;
-			while (head != NULL)
-			{
-				if (FD_ISSET(head->fd,&rfds))
-				{
-					char buf[1024] = {0};
-					size_t t;
-					ssize_t t2;
-					t2 = recv(head->fd,buf,1024,0);
-					if (t2 != -1)
-					{
-						cout << "got a message: " << buf << endl;
-					}
-				}
-				head = head->next;
-			}
-		}
-	return 0;
-}	
 int connectToServer()
 {
 	cout << "now initializing client..." << endl;
@@ -359,7 +312,7 @@ int connectToServer()
 	/*
 		get the address info
 	*/
-	if (getaddrinfo(host_address,port_number,&hints,&response) != 0)
+	if (getaddrinfo(host_address,"4545",&hints,&response) != 0)
 	{
 		cout << "failed to get addr info: " << strerror(errno) << endl;
 		return -1;
@@ -375,22 +328,31 @@ int connectToServer()
 		return -1;
 	}
 
-	cout << "this is your ai_addr:" << response->ai_addr->sa_data << endl;
-	cout << "this is your addrlen:" << response->ai_addrlen << endl;
 	if (connect(fd,response->ai_addr,response->ai_addrlen) == -1)
 	{
 		cout << "failed to connect to server socket: " << strerror(errno) << endl;
 		return -1;
 	}
-	//free(hints); this line isn't working for me, but i'm leaking now
-	ip_list = new struct node;
 
-	//init the first node of the ip list to be the server
-	ip_list->fd = fd;
-	ip_list->addr = response->ai_addr;
-	ip_list->next = NULL;
-	ip_list->id = 1;
+	/*
+	 * print some info
+	 */
+	if (getPortAndIp(fd) == -1)
+	{
+		cout << "failed to get port and ip:" << endl;
+		return -1;
+	}
+	//free(hints); this line isn't working for me, but i'm leaking now
+	struct node* newnode = new struct node;
+
+	newnode->fd = fd;
+	newnode->addr = response->ai_addr;
+	newnode->next = NULL;
+	newnode->id = 1;
+	ip_tail->next = newnode;
+	ip_tail = newnode;
 	cout << "connected to server!" << endl;
+
 	return 0;
 }
 
@@ -413,7 +375,6 @@ int insertNode(struct node* head,struct node* newNode)
 	tail->next = newNode;
 	cout << "lol"<< tail->id << endl;
 	newNode->id = tail->id;
-	cout << "lolz" << endl;
 	//increment the ID of the new connection node
 
 	cout << "insert complete" << endl;
@@ -464,33 +425,90 @@ int createRfds(fd_set *rfds)
 
 	return 0;
 }
-
 int blockAndAccept()
 {
 	int newfd;
 	struct sockaddr *newaddr = new struct sockaddr;
 	socklen_t addr_size = sizeof(struct sockaddr);
 	newfd = accept(ip_list->fd,newaddr,&addr_size);
+
 	if (newfd == -1)
 	{
 		cout << "accepting the new connection failed: " << strerror(errno) << endl;
 		return -1;
 	}
-	else
-	{
-		cout << "accepting a new connection" << endl;
 
-		/*
-		 * CREATE NEW CONNECTION NODE WITH THE FD
-		 */
-		struct node* newnode = new struct node;
-		newnode->fd = newfd;
-		newnode->addr = newaddr;
-		newnode->next = NULL;
-		newnode->id = ip_tail->id + 1;
-		ip_tail->next = newnode;
-		ip_tail = newnode;
+	/*
+	 * sysout some info about the new accept
+	 */
+	if (-1 == getPortAndIp(newfd))
+	{
+		cout << "failed to get port and ip:" << endl;
+		return -1;
 	}
+	cout << "accepting a new connection" << endl;
+	/*
+	 * CREATE NEW CONNECTION NODE WITH THE FD
+	 */
+	struct sockaddr_in* address = (struct sockaddr_in*)&newaddr;
+	struct node* newnode = new struct node;
+	newnode->fd = newfd;
+	newnode->addr = newaddr;
+	newnode->next = NULL;
+	newnode->id = ip_tail->id + 1;
+	ip_tail->next = newnode;
+	ip_tail = newnode;
 
 	return newfd;
+}
+int getPortAndIp(int fd)
+{
+   struct sockaddr_in peer;
+   socklen_t peer_len;
+   peer_len = sizeof(peer);
+   if (getpeername(fd,(struct sockaddr*)&peer, &peer_len) == -1) {
+	  cout << "failed to getpeername" << endl;
+	  return -1;
+   }
+   cout << "Peer address is " << inet_ntoa(peer.sin_addr) << ":" << ntohs(peer.sin_port) << endl;
+
+   /*
+    * cout my own listening socket
+    */
+   sockaddr_in sock;
+   socklen_t socklen = sizeof(sock);
+
+   if (-1 == getsockname(fd,(struct sockaddr*) &sock,&socklen))
+   {
+	   cout << "failed to get sockname" << endl;
+	   return -1;
+   }
+   cout << "My address is " << inet_ntoa(sock.sin_addr) << ":" << ntohs(sock.sin_port) << endl;
+   return 0;
+}
+int registerWithServer()
+{
+
+	return 0;
+}
+/*
+ * easy functions
+ */
+void printPort()
+{
+        cout << "listening on port " << port_number << endl;
+}
+
+void printCreator()
+{
+        cout << "Name: Ian Novickis" << endl;
+        cout << "UBIT: iannovic" << endl;
+        cout << "UBemail: iannovic@buffalo.edu" << endl;
+        cout << "I have read and understood the course academic integrity policy located at: " << endl;
+        cout << "http://www.cse.buffalo.edu/faculty/dimitrio/courses/cse4589_f14/index.html#intregrity" << endl;
+}
+
+void printHelp()
+{
+        cout << "print all the commands here, so that dumb people can see" << endl;
 }
