@@ -31,6 +31,7 @@
 #include <sys/fcntl.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sstream>
 #include <errno.h>
 #include "../include/global.h"
 
@@ -48,9 +49,9 @@ int initListen();
 
 //run that server
 int blockAndAccept();
-int getPortAndIp(int fd);
+
 //run that client
-int connectToServer();
+int connectToServer(std::string address, std::string port);
 /*
  * return the tail of the linkedlist
  */
@@ -65,17 +66,22 @@ struct node
 	int fd;		//reference to the fd for the socket
 	int id;		//server connection id (index of the list)
 	struct sockaddr * addr;
+	std::string port;
+	std::string address;
+	std::string name;
 	node *next;
 };
+
 int getTail(struct node* head, struct node** ret);
 int insertNode(struct node* head,struct node* newNode);
 int createRfds(fd_set *rfds);
+int appendNodeToString(char* buf, node* value);
+int getPortAndIp(node* theNode, int fd);
 /*
  * END OF LINKED LIST STUFF
  */
-
+int updateClientsList();
 char *port_number;
-char host_port_number[5] = "4545";
 
 struct node* ip_list;	
 struct node* ip_tail;
@@ -157,6 +163,11 @@ int main(int argc, char **argv)
 			{
 				cout << "accepted a new connection!" << endl;
 			}
+			if (-1 == updateClientsList())
+			{
+				cout << "failed to update Clients server-ip list" << endl;
+			}
+
 		}
 
 		/*
@@ -173,7 +184,7 @@ int main(int argc, char **argv)
 					char buf[1024] = {0};
 					size_t t;
 					ssize_t t2;
-					t2 = recv(head->fd,buf,1024,0);
+					t2 = recv(head->fd,&buf,1023,0);
 					if (t2 != -1)
 					{
 						cout << "got a message: " << buf << endl;
@@ -188,22 +199,37 @@ int main(int argc, char **argv)
 		 */
 		if (FD_ISSET(0,&rfds))
 		{
+
 			std::string line;
 			std::getline(std::cin,line);
+			string arg[3];
+			int argc = 0;
+			stringstream ssin(line);
+			while (ssin.good())
+			{
+				ssin >> arg[argc];
+				cout << arg[argc] << endl;
+				argc++;
+				if (argc >= 3)
+				{
+					cout << "cannot have that many arguments" << endl;
+					break;
+				}
+			}
 
-			if (line.compare("myport") == 0)
+			if (arg[0].compare("myport") == 0)
 			{
 				printPort();
 			}
-			else if (line.compare("creator") == 0)
+			else if (arg[0].compare("creator") == 0)
 			{
 					printCreator();
 			}
-			else if (line.compare("help") == 0)
+			else if (arg[0].compare("help") == 0)
 			{
 					printHelp();
 			}
-			else if (line.compare("send") == 0)
+			else if (arg[0].compare("send") == 0)
 			{
 				size_t len = 7;
 				char buf[8] = "message";
@@ -216,18 +242,22 @@ int main(int argc, char **argv)
 					cout << "message sent!" << endl;
 				}
 			}
-			else if (line.compare("register") == 0)
+			else if (arg[0].compare("register") == 0)
 			{
-				if (!isClient)
+				if (argc != 3)
+				{
+					cout << "invalid number of arguments" << endl;
+				}
+				else if (!isClient)
 				{
 					cout << "you are the server, silly. You can't register." << endl;
 				}
 				else
 				{
-					connectToServer();
+					connectToServer(arg[1],arg[2]);
 				}
 			}
-			else if ((line.compare("bye") == 0) || (line.compare("quit") == 0))
+			else if ((arg[0].compare("bye") == 0) || (arg[0].compare("quit") == 0))
 			{
 				cout << "gracefully closing the program" << endl;
 				return -1;
@@ -297,7 +327,7 @@ int initListen()
 	cout << "server successfully started" << endl;
 	return fd;	
 }
-int connectToServer()
+int connectToServer(std::string address, std::string port)
 {
 	cout << "now initializing client..." << endl;
 	struct addrinfo hints, *response;
@@ -312,7 +342,7 @@ int connectToServer()
 	/*
 		get the address info
 	*/
-	if (getaddrinfo(host_address,"4545",&hints,&response) != 0)
+	if (getaddrinfo(address.c_str(),port.c_str(),&hints,&response) != 0)
 	{
 		cout << "failed to get addr info: " << strerror(errno) << endl;
 		return -1;
@@ -334,16 +364,13 @@ int connectToServer()
 		return -1;
 	}
 
-	/*
-	 * print some info
-	 */
-	if (getPortAndIp(fd) == -1)
+
+	struct node* newnode = new struct node;
+	if (getPortAndIp(newnode,fd) == -1)
 	{
 		cout << "failed to get port and ip:" << endl;
 		return -1;
 	}
-	//free(hints); this line isn't working for me, but i'm leaking now
-	struct node* newnode = new struct node;
 
 	newnode->fd = fd;
 	newnode->addr = response->ai_addr;
@@ -419,7 +446,7 @@ int createRfds(fd_set *rfds)
 	while (head != NULL)
 	{
 		FD_SET(head->fd,rfds);
-		cout << "setting: " << head->fd << endl;
+		//cout << "setting: " << head->fd << endl;
 		head = head->next;
 	}
 
@@ -438,43 +465,56 @@ int blockAndAccept()
 		return -1;
 	}
 
+	struct sockaddr_in* address = (struct sockaddr_in*)&newaddr;
+	struct node* newnode = new struct node;
 	/*
 	 * sysout some info about the new accept
 	 */
-	if (-1 == getPortAndIp(newfd))
+	if (-1 == getPortAndIp(newnode,newfd))
 	{
 		cout << "failed to get port and ip:" << endl;
 		return -1;
 	}
 	cout << "accepting a new connection" << endl;
+
 	/*
 	 * CREATE NEW CONNECTION NODE WITH THE FD
 	 */
-	struct sockaddr_in* address = (struct sockaddr_in*)&newaddr;
-	struct node* newnode = new struct node;
 	newnode->fd = newfd;
 	newnode->addr = newaddr;
 	newnode->next = NULL;
 	newnode->id = ip_tail->id + 1;
 	ip_tail->next = newnode;
 	ip_tail = newnode;
-
 	return newfd;
 }
-int getPortAndIp(int fd)
+int getPortAndIp(node* theNode, int fd)
 {
    struct sockaddr_in peer;
    socklen_t peer_len;
    peer_len = sizeof(peer);
-   if (getpeername(fd,(struct sockaddr*)&peer, &peer_len) == -1) {
+   if (getpeername(fd,(struct sockaddr*)&peer, &peer_len) == -1)
+   {
 	  cout << "failed to getpeername" << endl;
 	  return -1;
    }
-   cout << "Peer address is " << inet_ntoa(peer.sin_addr) << ":" << ntohs(peer.sin_port) << endl;
+
+   /* all of this code to get the port*/
+   u_short shorty = ntohs(peer.sin_port);
+   std::stringstream ss;
+   ss << shorty ;
+   std::string s = ss.str();
+   theNode->port = s.c_str();
+   /* end of code to get the port into a char[]*/
+
+   theNode->address = inet_ntoa(peer.sin_addr);
+
+   cout << "Peer address is " << theNode->address << ":" << theNode->port<< endl;
 
    /*
     * cout my own listening socket
     */
+   /*
    sockaddr_in sock;
    socklen_t socklen = sizeof(sock);
 
@@ -484,6 +524,7 @@ int getPortAndIp(int fd)
 	   return -1;
    }
    cout << "My address is " << inet_ntoa(sock.sin_addr) << ":" << ntohs(sock.sin_port) << endl;
+   */
    return 0;
 }
 int registerWithServer()
@@ -511,4 +552,52 @@ void printCreator()
 void printHelp()
 {
         cout << "print all the commands here, so that dumb people can see" << endl;
+}
+
+/*
+ * this function will update all of the client server-ip lists each time it is called (so call it whenever a connection is registered or terminated)
+ */
+int updateClientsList()
+{
+	/*
+	 * construct the string to write to each socket connection
+	 */
+	node* head2 = ip_list;
+	char *buf = new char[1024];
+	while (head2 != NULL)
+	{
+		appendNodeToString(buf,head2);
+		head2 = head2->next;
+	}
+
+	/*
+	 * write to each socket pipe with the constructed string
+	 */
+	cout << "buffer is:" << buf << endl;
+	node* head = ip_list->next;
+	while (head != NULL)
+	{
+		cout << "Writing to the fd:" << head->fd << "..." << endl;
+		if (-1 == write(head->fd,buf,1023))
+		{
+			cout << "failed to write list out to: " << head->fd << endl;
+		}
+		else
+		{
+			cout << "successfully wrote to " << head->fd << " with message: " << buf << endl;
+		}
+		head = head->next;
+	}
+	free(buf);
+	return 0;
+}
+
+int appendNodeToString(char* buf, node* value)
+{
+	strcat(buf,value->address.c_str());
+	strcat(buf," ");
+	strcat(buf,value->port.c_str());
+	strcat(buf," ");
+	cout << buf<< endl;
+	return 0;
 }
