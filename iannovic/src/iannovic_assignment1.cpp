@@ -210,7 +210,7 @@ int main(int argc, char **argv)
 					{
 						cout << "got a message: " << buf << endl;
 					}
-
+					cout << "raw message: " << buf << endl;
 					int maxTokens = 32;
 					int tokenCount = 0;
 					char **tokens = new char*[32];
@@ -334,19 +334,21 @@ int main(int argc, char **argv)
 					cout << "failed to get node from id" << endl;
 					return -1;
 				}
-
-				size_t buflen = 0;
-
+				std::string prefix = "message ";
+				size_t buflen = strlen(prefix.c_str());
 				//find the total length of the buffer
-				for (int i = 0; i < argc; i ++)
+				/*&
+				 * start i at 2 because it ignores the first 2 arguments (send, connectionID)
+				 */
+				for (int i = 2; i < argc; i ++)
 				{
 					buflen = buflen + strlen(arg[i].c_str()) + 1;
 				}
 
 				//create buffer
 				char *buf = new char[buflen];
-				strcpy(buf,"message: ");
-				for (int i = 0; i < argc; i ++)
+				strcpy(buf,prefix.c_str());
+				for (int i = 2; i < argc; i ++)
 				{
 					strcat(buf,arg[i].c_str());
 					strcat(buf," ");
@@ -355,6 +357,7 @@ int main(int argc, char **argv)
 				cout << retNode->id;
 				cout << endl << retNode->address << retNode->port << endl;
 				cout << "buflen: " << buflen << endl;
+				cout << &buf << endl;
 				if (-1 == write(retNode->fd,buf,buflen))
 				{
 					cout << "failed to send: " << strerror(errno) << endl;
