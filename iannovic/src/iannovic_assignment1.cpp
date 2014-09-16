@@ -77,14 +77,28 @@ int insertNode(struct node* head,struct node* newNode);
 int createRfds(fd_set *rfds);
 int appendNodeToString(char* buf, node* value);
 int getPortAndIp(node* theNode, int fd);
+int buildUpdatedValidList(char* buf);
 /*
  * END OF LINKED LIST STUFF
  */
+
+/*
+ * print the connections list
+ */
+void printValidList();
+
 int updateClientsList();
 char *port_number;
 
 struct node* ip_list;	
 struct node* ip_tail;
+
+/*
+ * keep track of the valid connections on the client using these
+ */
+struct node* valid_connections_head;
+struct node* valid_connections_tail;
+
 const char* host_address = NULL;
 bool isClient;
 using namespace std;
@@ -165,13 +179,13 @@ int main(int argc, char **argv)
 			}
 			if (-1 == updateClientsList())
 			{
-				cout << "failed to update Clients server-ip list" << endl;
+				cout << "failed to update all clients valid list" << endl;
+				return -1;
 			}
-
 		}
 
 		/*
-		 * check to see if anything needs to be read other than the stdin
+		 * check to see if any open sockets needs to be read
 		 */
 		if (ip_list->next != NULL)
 		{
@@ -179,6 +193,7 @@ int main(int argc, char **argv)
 			while (head != NULL)
 			{
 				cout << "coming from fd: " << head->fd << endl;
+
 				if (FD_ISSET(head->fd,&rfds))
 				{
 					char buf[1024] = {0};
@@ -189,6 +204,13 @@ int main(int argc, char **argv)
 					{
 						cout << "got a message: " << buf << endl;
 					}
+					if (-1 == buildUpdatedValidList(buf))
+					{
+						cout << "failed to buld the valid connections list" << endl;
+						return -1;
+					}
+					printValidList();
+
 				}
 				head = head->next;
 			}
@@ -199,7 +221,6 @@ int main(int argc, char **argv)
 		 */
 		if (FD_ISSET(0,&rfds))
 		{
-
 			std::string line;
 			std::getline(std::cin,line);
 			string arg[3];
@@ -286,7 +307,6 @@ int initListen()
 
 	/*
 		get the address info
-	/*
 	*/
 	cout << "listening port number: " <<port_number << endl;
 	if (getaddrinfo(NULL,port_number,&hints,&response) != 0)
@@ -475,7 +495,7 @@ int blockAndAccept()
 		cout << "failed to get port and ip:" << endl;
 		return -1;
 	}
-	cout << "accepting a new connection" << endl;
+	//cout << "accepting a new connection" << endl;
 
 	/*
 	 * CREATE NEW CONNECTION NODE WITH THE FD
@@ -555,7 +575,7 @@ void printHelp()
 }
 
 /*
- * this function will update all of the client server-ip lists each time it is called (so call it whenever a connection is registered or terminated)
+ * send an updated list of valid connectons to each valid client
  */
 int updateClientsList()
 {
@@ -564,6 +584,14 @@ int updateClientsList()
 	 */
 	node* head2 = ip_list;
 	char *buf = new char[1024];
+	bzero(buf,1024);
+
+	/*
+	 * add "update" header to beginning of the string
+	 */
+	strcat(buf,"update");
+
+
 	while (head2 != NULL)
 	{
 		appendNodeToString(buf,head2);
@@ -600,4 +628,108 @@ int appendNodeToString(char* buf, node* value)
 	strcat(buf," ");
 	cout << buf<< endl;
 	return 0;
+}
+
+int buildUpdatedValidList(char* buf)
+{
+	/*
+	 * this will leak a lot of memory for now. @TODO fix this
+	 */
+	valid_connections_head = NULL;
+	valid_connections_tail = NULL;
+	/*
+	 * FIX THE ABOVE TO FREE EVERYTHING PROPERLY PLEASE IAN
+	 */
+
+	cout << "starting to build new valid connections list.." << endl;
+	char *token = strtok(buf," ");
+	cout << "this is your first token: " << token << endl;
+	if (strcmp(token,"update") == -1)
+	{
+		cout << "cannot call this function without an update header in the stream" << endl;
+		return -1;
+	}
+
+	cout << "finished validating the operation..." << endl;
+
+	char* addressBuffer = new char[64];
+	char* portBuffer = new char[16];
+
+	struct node* currentNode = new node;
+	valid_connections_head = currentNode;
+	int i = 0;
+
+	/*
+	 * iterate once passed the "update"
+	 */
+	int maxTokensAllowed = 16;
+	char **tokens = new char*[maxTokensAllowed];
+	while (token != NULL)
+	{
+		if (i >= maxTokensAllowed)
+		{
+			break;
+		}
+
+		cout << "token: " << token << endl;
+		fuckexec[i] = new char[strlen(token)];
+		strcpy(tokens[i],token);
+		token = strtok(NULL," ");
+
+		i++;
+	}
+
+	i = 0;
+	while (tokens[i] != NULL)
+	{
+
+	}
+	/*
+	token = strtok(NULL," ");
+	while (token != NULL)
+	{
+		cout << i << endl;
+		if (i == 0)
+		{
+			addressBuffer = token;
+			i = 1;
+		}
+		else
+		{
+			if (currentNode == NULL)
+			{
+				currentNode = new node;
+			}
+			portBuffer = token;
+			currentNode->address = addressBuffer;
+			currentNode->port = portBuffer;
+			cout << addressBuffer << ":" << portBuffer << endl;
+			currentNode = currentNode->next;
+
+			bzero(addressBuffer,63);
+			bzero(portBuffer,15);
+			i = 0;
+		}
+		token = strtok(NULL," ");
+		cout << buf << endl;
+		cout << "this is your new token:" << token << endl;
+	}
+
+	//free(&addressBuffer);
+	//free(&portBuffer);
+
+	cout << "list has been built!" << endl;
+	*/
+	return 0;
+}
+
+void printValidList()
+{
+	struct node* head = valid_connections_head;
+	cout << "printing all valid connections" << endl;
+	while (head != NULL)
+	{
+		cout << head->address << ":" << head->port << endl;
+		head = head->next;
+	}
 }
