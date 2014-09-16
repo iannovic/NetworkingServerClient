@@ -33,6 +33,7 @@
 #include <arpa/inet.h>
 #include <sstream>
 #include <errno.h>
+#include <netdb.h>
 #include "../include/global.h"
 
 //returns my_port
@@ -47,11 +48,16 @@ void printHelp();
 //initialize the server
 int initListen();
 
+//print open connections
+void printOpenList();
+
 //run that server
 int blockAndAccept();
 
-//run that client
-int connectToServer(std::string address, std::string port);
+/*
+ * the flag is to determine whether registering or connecting
+ */
+int connectTo(std::string address, std::string port,int flag);
 /*
  * return the tail of the linkedlist
  */
@@ -71,13 +77,15 @@ struct node
 	std::string name;
 	node *next;
 };
-
+int validateAddressAndPort(std::string address, std::string port);
 int getTail(struct node* head, struct node** ret);
 int insertNode(struct node* head,struct node* newNode);
 int createRfds(fd_set *rfds);
 int appendNodeToString(char* buf, node* value);
 int getPortAndIp(node* theNode, int fd);
-int buildUpdatedValidList(char* buf);
+int buildUpdatedValidList(char*** buf);
+int tokenizeBufferedMessage(char *buf, char ***tokens, int maxTokens,int *tokenCount);
+int getNodeById(struct node **ret, int id);
 /*
  * END OF LINKED LIST STUFF
  */
@@ -90,8 +98,10 @@ void printValidList();
 int updateClientsList();
 char *port_number;
 
-struct node* ip_list;	
-struct node* ip_tail;
+struct node* listening_socket;
+
+struct node* open_connections_head;
+struct node* open_connections_tail;
 
 /*
  * keep track of the valid connections on the client using these
@@ -163,11 +173,11 @@ int main(int argc, char **argv)
 			cout << "failed to select: " << strerror(errno) << endl;
 			return -1;
 		}
-
+		cout << "found input" << endl;
 		/*
 		 * this will always be the listening socket, both client and server
 		 */
-		if (FD_ISSET(ip_list->fd,&rfds))
+		if (FD_ISSET(listening_socket->fd,&rfds))
 		{
 			if (-1 == blockAndAccept())
 			{
@@ -176,26 +186,22 @@ int main(int argc, char **argv)
 			else
 			{
 				cout << "accepted a new connection!" << endl;
-			}
-			if (-1 == updateClientsList())
-			{
-				cout << "failed to update all clients valid list" << endl;
-				return -1;
+				printOpenList();
 			}
 		}
 
 		/*
 		 * check to see if any open sockets needs to be read
 		 */
-		if (ip_list->next != NULL)
+		if (open_connections_head != NULL)
 		{
-			struct node* head = ip_list->next;
+			struct node* head = open_connections_head;
 			while (head != NULL)
 			{
-				cout << "coming from fd: " << head->fd << endl;
 
 				if (FD_ISSET(head->fd,&rfds))
 				{
+					cout << "coming from fd: " << head->fd << endl;
 					char buf[1024] = {0};
 					size_t t;
 					ssize_t t2;
@@ -204,26 +210,88 @@ int main(int argc, char **argv)
 					{
 						cout << "got a message: " << buf << endl;
 					}
-					if (-1 == buildUpdatedValidList(buf))
+
+					int maxTokens = 32;
+					int tokenCount = 0;
+					char **tokens = new char*[32];
+					if (-1 == tokenizeBufferedMessage(buf,&tokens,maxTokens,&tokenCount))
 					{
-						cout << "failed to buld the valid connections list" << endl;
+						cout << "failed to tokenize the buffer" << endl;
 						return -1;
 					}
-					printValidList();
-
+					if (tokenCount < 1)
+					{
+						cout << "too little tokens from the message..." << endl;
+						return -1;
+					}
+					cout << "determining what function to run" << endl;
+					std::string command = tokens[0];
+					cout << command << tokenCount <<endl;
+					if (command.compare("update") == 0)
+					{
+						cout << "starting to update" << endl;
+						if (tokenCount < 3)
+						{
+							cout << "not enough tokens to run this command" << endl;
+							return -1;
+						}
+						if (!isClient)
+						{
+							cout << "server should not run this command" << endl;
+							return -1;
+						}
+						if (1 == buildUpdatedValidList(&tokens))
+						{
+							cout << "failed to build the valid connections list" << endl;
+							return -1;
+						}
+						printValidList();
+					}
+					else if (command.compare("port") == 0)
+					{
+						cout << "starting to set port" << endl;
+						if (tokenCount < 2)
+						{
+							cout << "failed to set port, not enough tokens" << endl;
+							return -1;
+						}
+						head->port = tokens[1];
+						if (!isClient)
+						{
+							/*
+							 * we only updateClientList IF we are the server
+							 * otherwise assume that its relavent to the open connections list only
+							 */
+							if (-1 == updateClientsList())
+							{
+								cout << "failed to update all clients valid list" << endl;
+								return -1;
+							}
+						}
+					}
+					else if (command.compare("message") == 0)
+					{
+						cout << "message received!" << endl;
+						for (int i = 0; i < tokenCount; i ++)
+						{
+							cout << tokens[i] << " ";
+						}
+						cout << endl;
+					}
 				}
 				head = head->next;
 			}
 		}
-
 		/*
 		 * check stdin
 		 */
 		if (FD_ISSET(0,&rfds))
 		{
+			cout << "reading from stdin" << endl;
 			std::string line;
 			std::getline(std::cin,line);
-			string arg[3];
+			int maxTokensRead = 32;
+			string arg[maxTokensRead];
 			int argc = 0;
 			stringstream ssin(line);
 			while (ssin.good())
@@ -231,7 +299,7 @@ int main(int argc, char **argv)
 				ssin >> arg[argc];
 				cout << arg[argc] << endl;
 				argc++;
-				if (argc >= 3)
+				if (argc >= maxTokensRead)
 				{
 					cout << "cannot have that many arguments" << endl;
 					break;
@@ -252,15 +320,44 @@ int main(int argc, char **argv)
 			}
 			else if (arg[0].compare("send") == 0)
 			{
-				size_t len = 7;
-				char buf[8] = "message";
-				if (-1 == write(ip_list->fd,buf,len))
+				if (argc < 3)
+				{
+					cout << "not enough arguments to run this command" << endl;
+					break;
+				}
+
+				// determine which fd is associated with the id
+				int id = atoi(arg[1].c_str());
+				struct node* retNode = NULL;
+				if (-1 == getNodeById(&retNode,id))
+				{
+					cout << "failed to get node from id" << endl;
+					return -1;
+				}
+
+				size_t buflen = 0;
+
+				//find the total length of the buffer
+				for (int i = 0; i < argc; i ++)
+				{
+					buflen = buflen + strlen(arg[i].c_str()) + 1;
+				}
+
+				//create buffer
+				char *buf = new char[buflen];
+				strcpy(buf,"message: ");
+				for (int i = 0; i < argc; i ++)
+				{
+					strcat(buf,arg[i].c_str());
+					strcat(buf," ");
+				}
+				cout << "buffer before sending to connectee: " << buf << endl;
+				cout << retNode->id;
+				cout << endl << retNode->address << retNode->port << endl;
+				cout << "buflen: " << buflen << endl;
+				if (-1 == write(retNode->fd,buf,buflen))
 				{
 					cout << "failed to send: " << strerror(errno) << endl;
-				}
-				else
-				{
-					cout << "message sent!" << endl;
 				}
 			}
 			else if (arg[0].compare("register") == 0)
@@ -275,8 +372,29 @@ int main(int argc, char **argv)
 				}
 				else
 				{
-					connectToServer(arg[1],arg[2]);
+					cout << "beginning to register" << endl;
+					connectTo(arg[1],arg[2],0);
 				}
+			}
+			else if (arg[0].compare("connect") == 0)
+			{
+				if (argc != 3)
+				{
+					cout << "invalid number of arguments" << endl;
+				}
+				else if (!isClient)
+				{
+					cout << "you are the server, silly. You can't register." << endl;
+				}
+				else
+				{
+					connectTo(arg[1],arg[2],1);
+				}
+			}
+			else if (arg[0].compare("list") == 0)
+			{
+				printOpenList();
+				printValidList();
 			}
 			else if ((arg[0].compare("bye") == 0) || (arg[0].compare("quit") == 0))
 			{
@@ -335,20 +453,90 @@ int initListen()
 	}
 
 	//free(hints); this line isn't working for me, but i'm leaking now
-	ip_list = new struct node;
+	listening_socket = new struct node;
 	
+	size_t buflen = 1024;
+	char* serv = new char[buflen];
+	char* host = new char[buflen];
+	if (getnameinfo((sockaddr*)response,response->ai_addrlen,host,buflen,serv,buflen,0) == -1)
+	{
+		cout << "failed to getnameinfo on listening socket" << endl;
+		return -1;
+	}
+	 struct sockaddr_in sa;
+	 size_t sa_len;
+
+	      /* We must put the length in a variable.              */
+	 sa_len = sizeof(sa);
+	      /* Ask getsockname to fill in this socket's local     */
+	      /* address.                                           */
+	   if (getsockname(fd,(sockaddr*) &sa, &sa_len) == -1) {
+	      perror("getsockname() failed");
+	      return -1;
+	   }
+
+	      /* Print it. The IP address is often zero beacuase    */
+	      /* sockets are seldom bound to a specific local       */
+	      /* interface.                                         */
+	   cout << "local ip is" << inet_ntoa(sa.sin_addr) << endl;
+	   cout << "local port is" << (int) ntohs(sa.sin_port) << endl;
+
+
+
 	//init the first node of the ip list to be the server
-	ip_list->fd = fd;
-	ip_list->addr = response->ai_addr;
-	ip_list->next = NULL;
-	ip_list->id = 1;
-	ip_tail = ip_list;
-	cout << "listening socket is fd:" << ip_list->fd << endl;
+	cout << "listening socket host buffer: "<< host << endl;
+	cout << "listing socket serv buffer: " << serv << endl;
+	listening_socket->fd = fd;
+	listening_socket->addr = response->ai_addr;
+	listening_socket->next = NULL;
+
+	cout << "listening socket is fd:" << listening_socket->fd << endl;
+	cout << "listening socket address:port are " << listening_socket->address << ":" << listening_socket->port << endl;
 	cout << "server successfully started" << endl;
 	return fd;	
 }
-int connectToServer(std::string address, std::string port)
+int validateAddressAndPort(std::string address, std::string port)
 {
+	struct node* head = valid_connections_head;
+	while (head != NULL)
+	{
+		if (address.compare(head->address) == 0 && port.compare(head->port) == 0)
+		{
+			/* address is considered valid now */
+			return 0;
+		}
+		head = head->next;
+	}
+	return -1;
+}
+int getNodeById(struct node **ret, int id)
+{
+	struct node* head = open_connections_head;
+	while (head != NULL)
+	{
+		if (head->id == id)
+		{
+			*ret = head;
+		}
+		head = head->next;
+	}
+
+	if (ret == NULL)
+	{
+		return -1;
+	}
+
+	return 0;
+}
+int connectTo(std::string address, std::string port,int flag)
+{
+	/*
+	 * if connecting, validate the address and port
+	 */
+	if (flag == 1 && -1 == validateAddressAndPort(address,port))
+	{
+		cout << "failed to validate address and port" << endl;
+	}
 	cout << "now initializing client..." << endl;
 	struct addrinfo hints, *response;
 
@@ -384,25 +572,50 @@ int connectToServer(std::string address, std::string port)
 		return -1;
 	}
 
+	struct node* currentNode = new struct node;
 
-	struct node* newnode = new struct node;
-	if (getPortAndIp(newnode,fd) == -1)
+	if (getPortAndIp(currentNode,fd) == -1)
 	{
 		cout << "failed to get port and ip:" << endl;
 		return -1;
 	}
 
-	newnode->fd = fd;
-	newnode->addr = response->ai_addr;
-	newnode->next = NULL;
-	newnode->id = 1;
-	ip_tail->next = newnode;
-	ip_tail = newnode;
+	cout << "adding a new entry to open connections" << endl;
+	if (open_connections_head == NULL)
+	{
+		cout << "you should be registering right now" << endl;
+		open_connections_head = currentNode;
+		open_connections_tail = currentNode;
+		currentNode->id = 1;
+	}
+	else
+	{
+	 currentNode->id = open_connections_tail->id + 1;
+	 open_connections_tail->next = currentNode;
+	 open_connections_tail = open_connections_tail->next;
+	}
+
+	currentNode->fd = fd;
+	currentNode->addr = response->ai_addr;
+	currentNode->next = NULL;
+
+	size_t len = 19;
+	char *buf = new char[20];
+	strcpy(buf,"port ");
+	strcat(buf,port_number);
+	if (-1 == write(fd,buf,len))
+	{
+		cout << "failed to send my port to connectee: " << strerror(errno) << endl;
+	}
+	else
+	{
+		cout << "sent this message to connectee: " << buf << endl;
+	}
+
 	cout << "connected to server!" << endl;
 
 	return 0;
 }
-
 int insertNode(struct node* head,struct node* newNode)
 {
 	struct node *tail;
@@ -460,9 +673,17 @@ int getTail(struct node* head,struct node **tail)
  */
 int createRfds(fd_set *rfds)
 {
-	struct node *head = ip_list;
+	struct node *head = open_connections_head;
 	FD_ZERO(rfds);
 
+	/*
+	 * add the listening socket to the fd_set
+	 */
+	FD_SET(listening_socket->fd,rfds);
+
+	/*
+	 * add all of the open connections to the fd_set
+	 */
 	while (head != NULL)
 	{
 		FD_SET(head->fd,rfds);
@@ -474,10 +695,11 @@ int createRfds(fd_set *rfds)
 }
 int blockAndAccept()
 {
+	cout << "starting to accept" << endl;
 	int newfd;
 	struct sockaddr *newaddr = new struct sockaddr;
 	socklen_t addr_size = sizeof(struct sockaddr);
-	newfd = accept(ip_list->fd,newaddr,&addr_size);
+	newfd = accept(listening_socket->fd,newaddr,&addr_size);
 
 	if (newfd == -1)
 	{
@@ -486,26 +708,34 @@ int blockAndAccept()
 	}
 
 	struct sockaddr_in* address = (struct sockaddr_in*)&newaddr;
-	struct node* newnode = new struct node;
+	struct node* newNode = new struct node;
 	/*
 	 * sysout some info about the new accept
 	 */
-	if (-1 == getPortAndIp(newnode,newfd))
+	if (-1 == getPortAndIp(newNode,newfd))
 	{
 		cout << "failed to get port and ip:" << endl;
 		return -1;
 	}
 	//cout << "accepting a new connection" << endl;
+	//cout << "starting to insert" << endl;
+	if (open_connections_head == NULL)
+	{
+		open_connections_head = newNode;
+		newNode->id = 1;
+		open_connections_tail = open_connections_head;
+	}
+	else
+	{
+		open_connections_tail->next = newNode;
+		newNode->id = open_connections_tail->id + 1;
+		open_connections_tail = open_connections_tail->next;
+	}
+	newNode->fd = newfd;
+	newNode->addr = newaddr;
+	newNode->next = NULL;
 
-	/*
-	 * CREATE NEW CONNECTION NODE WITH THE FD
-	 */
-	newnode->fd = newfd;
-	newnode->addr = newaddr;
-	newnode->next = NULL;
-	newnode->id = ip_tail->id + 1;
-	ip_tail->next = newnode;
-	ip_tail = newnode;
+	cout << "finished accepting and inserting" << endl;
 	return newfd;
 }
 int getPortAndIp(node* theNode, int fd)
@@ -518,7 +748,6 @@ int getPortAndIp(node* theNode, int fd)
 	  cout << "failed to getpeername" << endl;
 	  return -1;
    }
-
    /* all of this code to get the port*/
    u_short shorty = ntohs(peer.sin_port);
    std::stringstream ss;
@@ -529,22 +758,7 @@ int getPortAndIp(node* theNode, int fd)
 
    theNode->address = inet_ntoa(peer.sin_addr);
 
-   cout << "Peer address is " << theNode->address << ":" << theNode->port<< endl;
-
-   /*
-    * cout my own listening socket
-    */
-   /*
-   sockaddr_in sock;
-   socklen_t socklen = sizeof(sock);
-
-   if (-1 == getsockname(fd,(struct sockaddr*) &sock,&socklen))
-   {
-	   cout << "failed to get sockname" << endl;
-	   return -1;
-   }
-   cout << "My address is " << inet_ntoa(sock.sin_addr) << ":" << ntohs(sock.sin_port) << endl;
-   */
+   cout << "Peer address on fd " << fd << " is: " << theNode->address << ":" << theNode->port<< endl;
    return 0;
 }
 int registerWithServer()
@@ -552,9 +766,7 @@ int registerWithServer()
 
 	return 0;
 }
-/*
- * easy functions
- */
+
 void printPort()
 {
         cout << "listening on port " << port_number << endl;
@@ -579,18 +791,18 @@ void printHelp()
  */
 int updateClientsList()
 {
+	cout << "updating valid connections for all clients..." << endl;
 	/*
 	 * construct the string to write to each socket connection
 	 */
-	node* head2 = ip_list;
+	node* head2 = open_connections_head;
 	char *buf = new char[1024];
 	bzero(buf,1024);
 
 	/*
 	 * add "update" header to beginning of the string
 	 */
-	strcat(buf,"update");
-
+	strcat(buf,"update ");
 
 	while (head2 != NULL)
 	{
@@ -601,8 +813,9 @@ int updateClientsList()
 	/*
 	 * write to each socket pipe with the constructed string
 	 */
+	cout << "send buf out" << endl;
 	cout << "buffer is:" << buf << endl;
-	node* head = ip_list->next;
+	node* head = open_connections_head;
 	while (head != NULL)
 	{
 		cout << "Writing to the fd:" << head->fd << "..." << endl;
@@ -616,7 +829,6 @@ int updateClientsList()
 		}
 		head = head->next;
 	}
-	free(buf);
 	return 0;
 }
 
@@ -629,97 +841,71 @@ int appendNodeToString(char* buf, node* value)
 	cout << buf<< endl;
 	return 0;
 }
+int tokenizeBufferedMessage(char *buf, char ***tokens,int maxTokens,int *tokenCount)
+{
+	char *token = strtok(buf," ");
+	char **localTokens = *tokens;
+	int i = 0;
 
-int buildUpdatedValidList(char* buf)
+	/*
+	 * get all of the words in the message into an array
+	 */
+	cout << "beginning to tokenize" << endl;
+	while (token != NULL)
+	{
+		if (i >= maxTokens)
+		{
+			cout << "too many tokens in the buffer" << endl;
+			return -1;
+		}
+
+		//cout << "token: " << token << endl;
+		localTokens[i] = new char[strlen(token)];
+		strcpy(localTokens[i],token);
+		token = strtok(NULL," ");
+		i++;
+	}
+
+	//set the number of tokens counted
+	*tokenCount = i;
+
+	cout << "completed tokenizing" << endl;
+	return 0;
+}
+int buildUpdatedValidList(char*** buf)
 {
 	/*
 	 * this will leak a lot of memory for now. @TODO fix this
 	 */
 	valid_connections_head = NULL;
 	valid_connections_tail = NULL;
+
 	/*
-	 * FIX THE ABOVE TO FREE EVERYTHING PROPERLY PLEASE IAN
+	 * do this to skip passed the "update" in index 0
 	 */
-
-	cout << "starting to build new valid connections list.." << endl;
-	char *token = strtok(buf," ");
-	cout << "this is your first token: " << token << endl;
-	if (strcmp(token,"update") == -1)
+	int i = 1;
+	struct node* currentNode = NULL;
+	char ** tokens = *buf;
+	while (tokens[i] != NULL && tokens[i+1] != NULL)
 	{
-		cout << "cannot call this function without an update header in the stream" << endl;
-		return -1;
-	}
-
-	cout << "finished validating the operation..." << endl;
-
-	char* addressBuffer = new char[64];
-	char* portBuffer = new char[16];
-
-	struct node* currentNode = new node;
-	valid_connections_head = currentNode;
-	int i = 0;
-
-	/*
-	 * iterate once passed the "update"
-	 */
-	int maxTokensAllowed = 16;
-	char **tokens = new char*[maxTokensAllowed];
-	while (token != NULL)
-	{
-		if (i >= maxTokensAllowed)
+		if (valid_connections_head == NULL)
 		{
-			break;
-		}
-
-		cout << "token: " << token << endl;
-		fuckexec[i] = new char[strlen(token)];
-		strcpy(tokens[i],token);
-		token = strtok(NULL," ");
-
-		i++;
-	}
-
-	i = 0;
-	while (tokens[i] != NULL)
-	{
-
-	}
-	/*
-	token = strtok(NULL," ");
-	while (token != NULL)
-	{
-		cout << i << endl;
-		if (i == 0)
-		{
-			addressBuffer = token;
-			i = 1;
+			currentNode = new struct node;
+			valid_connections_head = currentNode;
 		}
 		else
 		{
-			if (currentNode == NULL)
-			{
-				currentNode = new node;
-			}
-			portBuffer = token;
-			currentNode->address = addressBuffer;
-			currentNode->port = portBuffer;
-			cout << addressBuffer << ":" << portBuffer << endl;
+			currentNode->next = new struct node;
 			currentNode = currentNode->next;
-
-			bzero(addressBuffer,63);
-			bzero(portBuffer,15);
-			i = 0;
 		}
-		token = strtok(NULL," ");
-		cout << buf << endl;
-		cout << "this is your new token:" << token << endl;
-	}
+		currentNode->address = tokens[i];
+		currentNode->port = tokens[i+1];
 
-	//free(&addressBuffer);
-	//free(&portBuffer);
+		i = i + 2;
+	}
+	currentNode = NULL;
 
 	cout << "list has been built!" << endl;
-	*/
 	return 0;
 }
 
@@ -730,6 +916,19 @@ void printValidList()
 	while (head != NULL)
 	{
 		cout << head->address << ":" << head->port << endl;
+		head = head->next;
+	}
+}
+
+void printOpenList()
+{
+	struct node* head = open_connections_head;
+	cout << "printing all open connections" << endl;
+	while (head != NULL)
+	{
+		cout <<"ID:" << head->id;
+		cout <<" address: " << head->address;
+		cout <<" port: " << head->port << endl;
 		head = head->next;
 	}
 }
