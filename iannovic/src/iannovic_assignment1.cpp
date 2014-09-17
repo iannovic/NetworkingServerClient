@@ -346,7 +346,7 @@ int main(int argc, char **argv)
 				}
 
 				//create buffer
-				char *buf = new char[buflen];
+				char buf[buflen];
 				strcpy(buf,prefix.c_str());
 				for (int i = 2; i < argc; i ++)
 				{
@@ -358,7 +358,7 @@ int main(int argc, char **argv)
 				cout << endl << retNode->address << retNode->port << endl;
 				cout << "buflen: " << buflen << endl;
 				cout << &buf << endl;
-				if (-1 == write(retNode->fd,buf,buflen))
+				if (-1 == write(retNode->fd,&buf,buflen))
 				{
 					cout << "failed to send: " << strerror(errno) << endl;
 				}
