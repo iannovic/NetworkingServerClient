@@ -86,6 +86,7 @@ int getPortAndIp(node* theNode, int fd);
 int buildUpdatedValidList(char*** buf);
 int tokenizeBufferedMessage(char *buf, char ***tokens, int maxTokens,int *tokenCount);
 int getNodeById(struct node **ret, int id);
+int isAlreadyConnected(std::string address, std::string port);
 /*
  * END OF LINKED LIST STUFF
  */
@@ -102,6 +103,7 @@ struct node* listening_socket;
 
 struct node* open_connections_head;
 struct node* open_connections_tail;
+int open_connections_size = 0;
 
 /*
  * keep track of the valid connections on the client using these
@@ -167,13 +169,13 @@ int main(int argc, char **argv)
 		}
 		FD_SET(0,&rfds); 	//read on stdin to see when it has input
 
-		cout << "waiting for input" << endl;
+		//cout << "waiting for input" << endl;
 		if (select(1024,&rfds,NULL,NULL,NULL) == -1)
 		{
 			cout << "failed to select: " << strerror(errno) << endl;
 			return -1;
 		}
-		cout << "found input" << endl;
+		//cout << "found input" << endl;
 		/*
 		 * this will always be the listening socket, both client and server
 		 */
@@ -206,11 +208,18 @@ int main(int argc, char **argv)
 					size_t t;
 					ssize_t t2;
 					t2 = recv(head->fd,&buf,1023,0);
-					if (t2 != -1)
+					if (t2 == -1)
 					{
-						cout << "got a message: " << buf << endl;
+						cout << "failed to receive the message " << buf << endl;
 					}
-					cout << "raw message: " << buf << endl;
+					else if (t2 == 0)
+					{
+						/*
+						 * close the socket
+						 * write a function that closes the socket, removes the open connection from the list of connections
+						 * updates the size of the list
+						 */
+					}
 					int maxTokens = 32;
 					int tokenCount = 0;
 					char **tokens = new char*[32];
@@ -224,12 +233,10 @@ int main(int argc, char **argv)
 						cout << "too little tokens from the message..." << endl;
 						return -1;
 					}
-					cout << "determining what function to run" << endl;
+					//cout << "determining what function to run" << endl;
 					std::string command = tokens[0];
-					cout << command << tokenCount <<endl;
 					if (command.compare("update") == 0)
 					{
-						cout << "starting to update" << endl;
 						if (tokenCount < 3)
 						{
 							cout << "not enough tokens to run this command" << endl;
@@ -245,6 +252,7 @@ int main(int argc, char **argv)
 							cout << "failed to build the valid connections list" << endl;
 							return -1;
 						}
+						cout << "Valid connections have been updated by the server..." << endl;
 						printValidList();
 					}
 					else if (command.compare("port") == 0)
@@ -287,7 +295,7 @@ int main(int argc, char **argv)
 		 */
 		if (FD_ISSET(0,&rfds))
 		{
-			cout << "reading from stdin" << endl;
+			//cout << "reading from stdin" << endl;
 			std::string line;
 			std::getline(std::cin,line);
 			int maxTokensRead = 32;
@@ -297,7 +305,7 @@ int main(int argc, char **argv)
 			while (ssin.good())
 			{
 				ssin >> arg[argc];
-				cout << arg[argc] << endl;
+				//cout << arg[argc] << endl;
 				argc++;
 				if (argc >= maxTokensRead)
 				{
@@ -389,14 +397,43 @@ int main(int argc, char **argv)
 				{
 					cout << "you are the server, silly. You can't register." << endl;
 				}
+
+				/*
+				 * check to see if the connection is already in open connections list
+				 */
+				else if (isAlreadyConnected(arg[1],arg[2]) == -1)
+				{
+					cout << "connection with this address and port already exists!" << endl;
+				}
 				else
 				{
 					connectTo(arg[1],arg[2],1);
 				}
 			}
+			else if (arg[0].compare("terminate")
+			{
+					if (argc != 2)
+					{
+						cout << "when using terminate you need 2 arguments, second is the connectID. use list command to find connectionID's" << endl;
+					}
+
+					struct node* retNode = NULL;
+					int id = atoi(arg[1]);
+
+					if (getNodeById(retNode,id) == -1)
+					{
+						cout << "failed to get the connection from the list by that ID, wrong ID perhaps?" << endl;
+					}
+
+					if (close(retNode->fd) == -1)
+					{
+						cout << "failed to close the socket with connectionID: " << id << endl;
+					}
+			}
 			else if (arg[0].compare("list") == 0)
 			{
 				printOpenList();
+				cout << endl;
 				printValidList();
 			}
 			else if ((arg[0].compare("bye") == 0) || (arg[0].compare("quit") == 0))
@@ -416,7 +453,7 @@ int main(int argc, char **argv)
 
 int initListen()
 {
-	cout << "now initializing the listening socket..." << endl;
+	//cout << "now initializing the listening socket..." << endl;
 	struct addrinfo hints, *response;
 
 	int fd = 0;
@@ -429,7 +466,6 @@ int initListen()
 	/*
 		get the address info
 	*/
-	cout << "listening port number: " <<port_number << endl;
 	if (getaddrinfo(NULL,port_number,&hints,&response) != 0)
 	{
 		cout << "failed to get addr info: " << strerror(errno) << endl;
@@ -457,45 +493,14 @@ int initListen()
 
 	//free(hints); this line isn't working for me, but i'm leaking now
 	listening_socket = new struct node;
-	
-	size_t buflen = 1024;
-	char* serv = new char[buflen];
-	char* host = new char[buflen];
-	if (getnameinfo((sockaddr*)response,response->ai_addrlen,host,buflen,serv,buflen,0) == -1)
-	{
-		cout << "failed to getnameinfo on listening socket" << endl;
-		return -1;
-	}
-	 struct sockaddr_in sa;
-	 size_t sa_len;
-
-	      /* We must put the length in a variable.              */
-	 sa_len = sizeof(sa);
-	      /* Ask getsockname to fill in this socket's local     */
-	      /* address.                                           */
-	   if (getsockname(fd,(sockaddr*) &sa, &sa_len) == -1) {
-	      perror("getsockname() failed");
-	      return -1;
-	   }
-
-	      /* Print it. The IP address is often zero beacuase    */
-	      /* sockets are seldom bound to a specific local       */
-	      /* interface.                                         */
-	   cout << "local ip is" << inet_ntoa(sa.sin_addr) << endl;
-	   cout << "local port is" << (int) ntohs(sa.sin_port) << endl;
-
-
 
 	//init the first node of the ip list to be the server
-	cout << "listening socket host buffer: "<< host << endl;
-	cout << "listing socket serv buffer: " << serv << endl;
 	listening_socket->fd = fd;
 	listening_socket->addr = response->ai_addr;
 	listening_socket->next = NULL;
-
-	cout << "listening socket is fd:" << listening_socket->fd << endl;
+	listening_socket->port = port_number;
 	cout << "listening socket address:port are " << listening_socket->address << ":" << listening_socket->port << endl;
-	cout << "server successfully started" << endl;
+	cout << "listening socket successfully started" << endl;
 	return fd;	
 }
 int validateAddressAndPort(std::string address, std::string port)
@@ -540,7 +545,7 @@ int connectTo(std::string address, std::string port,int flag)
 	{
 		cout << "failed to validate address and port" << endl;
 	}
-	cout << "now initializing client..." << endl;
+	//cout << "now initializing client..." << endl;
 	struct addrinfo hints, *response;
 
 	int fd = 0;
@@ -583,10 +588,9 @@ int connectTo(std::string address, std::string port,int flag)
 		return -1;
 	}
 
-	cout << "adding a new entry to open connections" << endl;
+	//cout << "adding a new entry to open connections" << endl;
 	if (open_connections_head == NULL)
 	{
-		cout << "you should be registering right now" << endl;
 		open_connections_head = currentNode;
 		open_connections_tail = currentNode;
 		currentNode->id = 1;
@@ -610,12 +614,15 @@ int connectTo(std::string address, std::string port,int flag)
 	{
 		cout << "failed to send my port to connectee: " << strerror(errno) << endl;
 	}
+	if (flag == 0)
+	{
+		cout << "successfully registered to the server!" << endl;
+	}
 	else
 	{
-		cout << "sent this message to connectee: " << buf << endl;
+		cout << "a new connection has succesfully been opened!" << endl;
 	}
 
-	cout << "connected to server!" << endl;
 
 	return 0;
 }
@@ -853,7 +860,7 @@ int tokenizeBufferedMessage(char *buf, char ***tokens,int maxTokens,int *tokenCo
 	/*
 	 * get all of the words in the message into an array
 	 */
-	cout << "beginning to tokenize" << endl;
+	//cout << "beginning to tokenize" << endl;
 	while (token != NULL)
 	{
 		if (i >= maxTokens)
@@ -872,7 +879,7 @@ int tokenizeBufferedMessage(char *buf, char ***tokens,int maxTokens,int *tokenCo
 	//set the number of tokens counted
 	*tokenCount = i;
 
-	cout << "completed tokenizing" << endl;
+	//cout << "completed tokenizing" << endl;
 	return 0;
 }
 int buildUpdatedValidList(char*** buf)
@@ -907,31 +914,105 @@ int buildUpdatedValidList(char*** buf)
 		i = i + 2;
 	}
 	currentNode = NULL;
-
-	cout << "list has been built!" << endl;
 	return 0;
 }
 
 void printValidList()
 {
 	struct node* head = valid_connections_head;
-	cout << "printing all valid connections" << endl;
+	cout << "Printing all VALID addresses" << endl;
+	cout << "=====================================" << endl;
 	while (head != NULL)
 	{
-		cout << head->address << ":" << head->port << endl;
+		cout << "Address: " << head->address << ", Port: " << head->port << endl;
 		head = head->next;
 	}
+	cout << "=====================================" << endl;
 }
 
 void printOpenList()
 {
 	struct node* head = open_connections_head;
-	cout << "printing all open connections" << endl;
+	cout << "Printing all OPEN Connections" << endl;
+	cout << "=====================================" << endl;
 	while (head != NULL)
 	{
-		cout <<"ID:" << head->id;
+		cout <<"ConnectID:" << head->id;
 		cout <<" address: " << head->address;
 		cout <<" port: " << head->port << endl;
 		head = head->next;
 	}
+	cout << "=====================================" << endl;
+}
+
+int isAlreadyConnected(std::string address,std::string port)
+{
+	struct node* head = open_connections_head;
+
+	/*
+	 *TODO check to see if connected to self as a base case
+	 */
+
+
+	cout << "starting to check if it's already connected to this port/address" << endl;
+	while (head != NULL)
+	{
+
+		if (address == head->address && port == head->port)
+		{
+			cout << "failure..." << endl;
+			/*
+			 * if we enter this block, then the connection already existed.
+			 */
+			return -1;
+		}
+		head = head->next;
+	}
+	cout << "success, beginning to connect..." << endl;
+	return 0;
+}
+
+int closeSocketAndDeleteNote(struct *node deleteeNode)
+{
+	/*
+	 * close the socket
+	 * write a function that closes the socket, removes the open connection from the list of connections
+	 * updates the size of the list
+	 */
+	struct node* head = open_connections_head;
+	struct node* previous = NULL;
+
+	/*
+	 * check to see if the head is the deletee, if so, then set him to be the next element in the list b/c no one else is pointing to him
+	 */
+	if (head == deleteeNode)
+	{
+		open_connections_head = open_connections_head->next;
+	}
+	while (head != NULL)
+	{
+		if (head == deleteeNode)
+		{
+			previous->next = head->next;
+			break;
+		}
+		previous = head;
+		head = head->next;
+	}
+
+
+	/*
+	 * if the head is NULL at this point, then assume that the structure is empty
+	 */
+	if (head == NULL)
+	{
+		open_connections_tail == NULL;
+	}
+
+	/*
+	 * decrement the size of the structure
+	 */
+	open_connections_size--;
+
+	return 0;
 }
