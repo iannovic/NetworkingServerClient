@@ -87,6 +87,7 @@ int buildUpdatedValidList(char*** buf);
 int tokenizeBufferedMessage(char *buf, char ***tokens, int maxTokens,int *tokenCount);
 int getNodeById(struct node **ret, int id);
 int isAlreadyConnected(std::string address, std::string port);
+int closeSocketAndDeleteNode(struct node* deleteeNode);
 /*
  * END OF LINKED LIST STUFF
  */
@@ -203,7 +204,7 @@ int main(int argc, char **argv)
 
 				if (FD_ISSET(head->fd,&rfds))
 				{
-					cout << "coming from fd: " << head->fd << endl;
+					cout << "found input on socket: " << head->fd << endl;
 					char buf[1024] = {0};
 					size_t t;
 					ssize_t t2;
@@ -214,77 +215,86 @@ int main(int argc, char **argv)
 					}
 					else if (t2 == 0)
 					{
+						cout << "peer socket has closed its connection" << endl;
+						closeSocketAndDeleteNode(head);
+						if (!isClient)
+						{
+							updateClientsList();
+						}
 						/*
 						 * close the socket
 						 * write a function that closes the socket, removes the open connection from the list of connections
 						 * updates the size of the list
 						 */
 					}
-					int maxTokens = 32;
-					int tokenCount = 0;
-					char **tokens = new char*[32];
-					if (-1 == tokenizeBufferedMessage(buf,&tokens,maxTokens,&tokenCount))
+					else
 					{
-						cout << "failed to tokenize the buffer" << endl;
-						return -1;
-					}
-					if (tokenCount < 1)
-					{
-						cout << "too little tokens from the message..." << endl;
-						return -1;
-					}
-					//cout << "determining what function to run" << endl;
-					std::string command = tokens[0];
-					if (command.compare("update") == 0)
-					{
-						if (tokenCount < 3)
+						int maxTokens = 32;
+						int tokenCount = 0;
+						char **tokens = new char*[32];
+						if (-1 == tokenizeBufferedMessage(buf,&tokens,maxTokens,&tokenCount))
 						{
-							cout << "not enough tokens to run this command" << endl;
+							cout << "failed to tokenize the buffer" << endl;
 							return -1;
 						}
-						if (!isClient)
+						if (tokenCount < 1)
 						{
-							cout << "server should not run this command" << endl;
-							return -1;
+							cout << "too little tokens from the message..." << endl;
+							//return -1;
 						}
-						if (1 == buildUpdatedValidList(&tokens))
+						//cout << "determining what function to run" << endl;
+						std::string command = tokens[0];
+						if (command.compare("update") == 0)
 						{
-							cout << "failed to build the valid connections list" << endl;
-							return -1;
-						}
-						cout << "Valid connections have been updated by the server..." << endl;
-						printValidList();
-					}
-					else if (command.compare("port") == 0)
-					{
-						cout << "starting to set port" << endl;
-						if (tokenCount < 2)
-						{
-							cout << "failed to set port, not enough tokens" << endl;
-							return -1;
-						}
-						head->port = tokens[1];
-						if (!isClient)
-						{
-							/*
-							 * we only updateClientList IF we are the server
-							 * otherwise assume that its relavent to the open connections list only
-							 */
-							if (-1 == updateClientsList())
+							if (tokenCount < 3)
 							{
-								cout << "failed to update all clients valid list" << endl;
+								cout << "not enough tokens to run this command" << endl;
 								return -1;
 							}
+							if (!isClient)
+							{
+								cout << "server should not run this command" << endl;
+								return -1;
+							}
+							if (1 == buildUpdatedValidList(&tokens))
+							{
+								cout << "failed to build the valid connections list" << endl;
+								return -1;
+							}
+							cout << "Valid connections have been updated by the server..." << endl;
+							printValidList();
 						}
-					}
-					else if (command.compare("message") == 0)
-					{
-						cout << "message received!" << endl;
-						for (int i = 0; i < tokenCount; i ++)
+						else if (command.compare("port") == 0)
 						{
-							cout << tokens[i] << " ";
+							cout << "starting to set port" << endl;
+							if (tokenCount < 2)
+							{
+								cout << "failed to set port, not enough tokens" << endl;
+								return -1;
+							}
+							head->port = tokens[1];
+							if (!isClient)
+							{
+								/*
+								 * we only updateClientList IF we are the server
+								 * otherwise assume that its relavent to the open connections list only
+								 */
+								if (-1 == updateClientsList())
+								{
+									cout << "failed to update all clients valid list" << endl;
+									return -1;
+								}
+							}
 						}
-						cout << endl;
+						else if (command.compare("message") == 0)
+						{
+							cout << "message received!" << endl;
+							for (int i = 0; i < tokenCount; i ++)
+							{
+								cout << tokens[i] << " ";
+							}
+							cout << endl;
+						}
 					}
 				}
 				head = head->next;
@@ -410,7 +420,7 @@ int main(int argc, char **argv)
 					connectTo(arg[1],arg[2],1);
 				}
 			}
-			else if (arg[0].compare("terminate")
+			else if (arg[0].compare("terminate") == 0)
 			{
 					if (argc != 2)
 					{
@@ -418,16 +428,16 @@ int main(int argc, char **argv)
 					}
 
 					struct node* retNode = NULL;
-					int id = atoi(arg[1]);
+					int id = atoi(arg[1].c_str());
 
-					if (getNodeById(retNode,id) == -1)
+					if (getNodeById(&retNode,id) == -1)
 					{
 						cout << "failed to get the connection from the list by that ID, wrong ID perhaps?" << endl;
 					}
 
-					if (close(retNode->fd) == -1)
+					if (closeSocketAndDeleteNode(retNode) == -1)
 					{
-						cout << "failed to close the socket with connectionID: " << id << endl;
+						cout << "Failed to closeSocketAndDeleteNode() ..." << endl;
 					}
 			}
 			else if (arg[0].compare("list") == 0)
@@ -972,8 +982,9 @@ int isAlreadyConnected(std::string address,std::string port)
 	return 0;
 }
 
-int closeSocketAndDeleteNote(struct *node deleteeNode)
+int closeSocketAndDeleteNode(struct node* deleteeNode)
 {
+	cout << "starting to deleteNode" << endl;
 	/*
 	 * close the socket
 	 * write a function that closes the socket, removes the open connection from the list of connections
@@ -985,10 +996,13 @@ int closeSocketAndDeleteNote(struct *node deleteeNode)
 	/*
 	 * check to see if the head is the deletee, if so, then set him to be the next element in the list b/c no one else is pointing to him
 	 */
+	cout << "checking if its the head" << endl;
 	if (head == deleteeNode)
 	{
 		open_connections_head = open_connections_head->next;
+		head = NULL;
 	}
+	cout << "checking everything else..." << endl;
 	while (head != NULL)
 	{
 		if (head == deleteeNode)
@@ -1014,5 +1028,9 @@ int closeSocketAndDeleteNote(struct *node deleteeNode)
 	 */
 	open_connections_size--;
 
+	if (close(deleteeNode->fd) == -1)
+	{
+		cout << "failed to close the socket with connectionID: " << deleteeNode->id << endl;
+	}
 	return 0;
 }
