@@ -74,7 +74,7 @@ struct node
 	struct sockaddr * addr;
 	std::string port;
 	std::string address;
-	std::string name;
+	std::string hostname;
 	node *next;
 };
 int validateAddressAndPort(std::string address, std::string port);
@@ -82,11 +82,12 @@ int getTail(struct node* head, struct node** ret);
 int insertNode(struct node* head,struct node* newNode);
 int createRfds(fd_set *rfds);
 int appendNodeToString(char* buf, node* value);
+int getAddressInfo(std::string port, std::string address);
 int getPortAndIp(node* theNode, int fd);
 int buildUpdatedValidList(char*** buf);
 int tokenizeBufferedMessage(char *buf, char ***tokens, int maxTokens,int *tokenCount);
 int getNodeById(struct node **ret, int id);
-int isAlreadyConnected(std::string address, std::string port);
+int isContained(std::string address, std::string port, struct node *head);
 int closeSocketAndDeleteNode(struct node* deleteeNode);
 /*
  * END OF LINKED LIST STUFF
@@ -97,7 +98,7 @@ int closeSocketAndDeleteNode(struct node* deleteeNode);
  */
 void printValidList();
 
-int updateClientsList();
+int updateAndSendValidList();
 char *port_number;
 
 struct node* listening_socket;
@@ -105,6 +106,7 @@ struct node* listening_socket;
 struct node* open_connections_head;
 struct node* open_connections_tail;
 int open_connections_size = 0;
+int max_connections_allowed = 3;
 
 /*
  * keep track of the valid connections on the client using these
@@ -170,7 +172,6 @@ int main(int argc, char **argv)
 		}
 		FD_SET(0,&rfds); 	//read on stdin to see when it has input
 
-		//cout << "waiting for input" << endl;
 		if (select(1024,&rfds,NULL,NULL,NULL) == -1)
 		{
 			cout << "failed to select: " << strerror(errno) << endl;
@@ -215,11 +216,15 @@ int main(int argc, char **argv)
 					}
 					else if (t2 == 0)
 					{
-						cout << "peer socket has closed its connection" << endl;
+
+						cout << "the process at " << head->hostname << " has closed their socket" << endl;
+						cout << "Sender's Address: " << head->address << endl;
+						cout << "Sender's Port: " << head->port << endl;
+
 						closeSocketAndDeleteNode(head);
 						if (!isClient)
 						{
-							updateClientsList();
+							updateAndSendValidList();
 						}
 						/*
 						 * close the socket
@@ -279,7 +284,7 @@ int main(int argc, char **argv)
 								 * we only updateClientList IF we are the server
 								 * otherwise assume that its relavent to the open connections list only
 								 */
-								if (-1 == updateClientsList())
+								if (-1 == updateAndSendValidList())
 								{
 									cout << "failed to update all clients valid list" << endl;
 									return -1;
@@ -288,8 +293,11 @@ int main(int argc, char **argv)
 						}
 						else if (command.compare("message") == 0)
 						{
-							cout << "message received!" << endl;
-							for (int i = 0; i < tokenCount; i ++)
+							cout << "Message received from " << head->hostname << endl;
+							cout <<	"Sender's IP: " 	<< head->address	<< endl;
+							cout << "Sender's Port: " 	<< head->port		<< endl;
+							cout << "Message: ";
+							for (int i = 1; i < tokenCount; i ++)
 							{
 								cout << tokens[i] << " ";
 							}
@@ -341,44 +349,50 @@ int main(int argc, char **argv)
 				if (argc < 3)
 				{
 					cout << "not enough arguments to run this command" << endl;
-					break;
 				}
+				else if (!isClient)
+				{
+					cout << "server is not permitted to send messages" << endl;
+				}
+				else
+				{
+					// determine which fd is associated with the id
+					int id = atoi(arg[1].c_str());
+					struct node* retNode = NULL;
+					if (-1 == getNodeById(&retNode,id))
+					{
+						cout << "failed to get node from id" << endl;
+						return -1;
+					}
+					std::string prefix = "message ";
+					size_t buflen = strlen(prefix.c_str());
 
-				// determine which fd is associated with the id
-				int id = atoi(arg[1].c_str());
-				struct node* retNode = NULL;
-				if (-1 == getNodeById(&retNode,id))
-				{
-					cout << "failed to get node from id" << endl;
-					return -1;
-				}
-				std::string prefix = "message ";
-				size_t buflen = strlen(prefix.c_str());
-				//find the total length of the buffer
-				/*&
-				 * start i at 2 because it ignores the first 2 arguments (send, connectionID)
-				 */
-				for (int i = 2; i < argc; i ++)
-				{
-					buflen = buflen + strlen(arg[i].c_str()) + 1;
-				}
+					size_t max_buflen = 100 + buflen;
+					//find the total length of the buffer
+					/*&
+					 * start i at 2 because it ignores the first 2 arguments (send, connectionID)
+					 */
+					for (int i = 2; i < argc; i ++)
+					{
+						buflen = buflen + strlen(arg[i].c_str()) + 1;
+					}
 
-				//create buffer
-				char buf[buflen];
-				strcpy(buf,prefix.c_str());
-				for (int i = 2; i < argc; i ++)
-				{
-					strcat(buf,arg[i].c_str());
-					strcat(buf," ");
-				}
-				cout << "buffer before sending to connectee: " << buf << endl;
-				cout << retNode->id;
-				cout << endl << retNode->address << retNode->port << endl;
-				cout << "buflen: " << buflen << endl;
-				cout << &buf << endl;
-				if (-1 == write(retNode->fd,&buf,buflen))
-				{
-					cout << "failed to send: " << strerror(errno) << endl;
+					//create buffer
+					char buf[buflen];
+					strcpy(buf,prefix.c_str());
+					for (int i = 2; i < argc; i ++)
+					{
+						strcat(buf,arg[i].c_str());
+						strcat(buf," ");
+					}
+					if (buflen >= max_buflen)
+					{
+						cout << "message cannot be greater than 100 characters, please shorten the message!" << endl;
+					}
+					else if (-1 == write(retNode->fd,&buf,buflen))
+					{
+						cout << "failed to send: " << strerror(errno) << endl;
+					}
 				}
 			}
 			else if (arg[0].compare("register") == 0)
@@ -394,7 +408,10 @@ int main(int argc, char **argv)
 				else
 				{
 					cout << "beginning to register" << endl;
-					connectTo(arg[1],arg[2],0);
+					if (-1 == connectTo(arg[1],arg[2],0));
+					{
+						cout << "failed to register" << endl;
+					}
 				}
 			}
 			else if (arg[0].compare("connect") == 0)
@@ -411,13 +428,16 @@ int main(int argc, char **argv)
 				/*
 				 * check to see if the connection is already in open connections list
 				 */
-				else if (isAlreadyConnected(arg[1],arg[2]) == -1)
+				else if (isContained(arg[1],arg[2],open_connections_head) == -1)
 				{
 					cout << "connection with this address and port already exists!" << endl;
 				}
 				else
 				{
-					connectTo(arg[1],arg[2],1);
+					if (-1 ==connectTo(arg[1],arg[2],1))
+					{
+						cout << "failed to connect" << endl;
+					}
 				}
 			}
 			else if (arg[0].compare("terminate") == 0)
@@ -426,18 +446,19 @@ int main(int argc, char **argv)
 					{
 						cout << "when using terminate you need 2 arguments, second is the connectID. use list command to find connectionID's" << endl;
 					}
-
-					struct node* retNode = NULL;
-					int id = atoi(arg[1].c_str());
-
-					if (getNodeById(&retNode,id) == -1)
+					else
 					{
-						cout << "failed to get the connection from the list by that ID, wrong ID perhaps?" << endl;
-					}
+						struct node* retNode = NULL;
+						int id = atoi(arg[1].c_str());
 
-					if (closeSocketAndDeleteNode(retNode) == -1)
-					{
-						cout << "Failed to closeSocketAndDeleteNode() ..." << endl;
+						if (getNodeById(&retNode,id) == -1)
+						{
+							cout << "failed to get the connection from the list by that ID, wrong ID perhaps?" << endl;
+						}
+						else if (closeSocketAndDeleteNode(retNode) == -1)
+						{
+							cout << "Failed to closeSocketAndDeleteNode() ..." << endl;
+						}
 					}
 			}
 			else if (arg[0].compare("list") == 0)
@@ -446,14 +467,25 @@ int main(int argc, char **argv)
 				cout << endl;
 				printValidList();
 			}
-			else if ((arg[0].compare("bye") == 0) || (arg[0].compare("quit") == 0))
+			else if ((arg[0].compare("exit") == 0) ||(arg[0].compare("bye") == 0) || (arg[0].compare("quit") == 0))
 			{
+				struct node *head = open_connections_head;
+				while (head != NULL)
+				{
+					struct node *deletedNode = head;
+					head = head->next;
+					if (-1 == closeSocketAndDeleteNode(deletedNode))
+					{
+						cout << "Failed to delete and close socket connection" << endl;
+						return -1;
+					}
+				}
 				cout << "gracefully closing the program" << endl;
 				return -1;
 			}
 			else
 			{
-					cout << "invalid command, type 'help' if you need, help." << endl;
+					cout << "invalid command, type 'help' if you need help." << endl;
 			}
 		}
 	}
@@ -549,15 +581,35 @@ int getNodeById(struct node **ret, int id)
 int connectTo(std::string address, std::string port,int flag)
 {
 	/*
-	 * if connecting, validate the address and port
+	 * also have to check to see if this is a register versus a connect to
+	 *
+	 * 		flag values
+	 * 		0 == register
+	 *  	1 == connect
+	 *
+	 * otherwise we prevent the client from connecting to the server
+	 * we check to see if == 0 because that implies that something was not contained in the list
+	 *
+	 * this works the opposite way for the open_connections because we want to check for duplicates
 	 */
-	if (flag == 1 && -1 == validateAddressAndPort(address,port))
+	if (flag == 1 && isContained(address,port,valid_connections_head) == 0)
 	{
-		cout << "failed to validate address and port" << endl;
+		cout << "The address you are trying to connect to is not registered and validated." << endl;
+		return -1;
 	}
-	//cout << "now initializing client..." << endl;
-	struct addrinfo hints, *response;
+	if (flag == 1 && isContained(address,port,open_connections_head) == -1)
+	{
+		cout << "You are already connected to that peer!" << endl;
+		return -1;
+	}
 
+	if (max_connections_allowed + 1 <= open_connections_size)
+	{
+		cout << "you cannot connect, you aready have 3 open peer connections" << endl;
+		return -1;
+	}
+
+	struct addrinfo hints, *response;
 	int fd = 0;
 	memset(&hints,0, sizeof hints);
 
@@ -591,13 +643,13 @@ int connectTo(std::string address, std::string port,int flag)
 	}
 
 	struct node* currentNode = new struct node;
-
-	if (getPortAndIp(currentNode,fd) == -1)
+	//currentNode->port = port;
+	//currentNode->address = address;
+	if (-1 == getPortAndIp(currentNode,fd))
 	{
-		cout << "failed to get port and ip:" << endl;
+		cout << "failed to get port and ip!" << endl;
 		return -1;
 	}
-
 	//cout << "adding a new entry to open connections" << endl;
 	if (open_connections_head == NULL)
 	{
@@ -632,8 +684,7 @@ int connectTo(std::string address, std::string port,int flag)
 	{
 		cout << "a new connection has succesfully been opened!" << endl;
 	}
-
-
+	open_connections_size++;
 	return 0;
 }
 int insertNode(struct node* head,struct node* newNode)
@@ -715,20 +766,45 @@ int createRfds(fd_set *rfds)
 }
 int blockAndAccept()
 {
-	cout << "starting to accept" << endl;
+	cout << "starting to accept size is: " << open_connections_size << endl;
 	int newfd;
 	struct sockaddr *newaddr = new struct sockaddr;
 	socklen_t addr_size = sizeof(struct sockaddr);
-	newfd = accept(listening_socket->fd,newaddr,&addr_size);
 
+	newfd = accept(listening_socket->fd,newaddr,&addr_size);
 	if (newfd == -1)
 	{
 		cout << "accepting the new connection failed: " << strerror(errno) << endl;
 		return -1;
 	}
 
+	/*
+	 * must accept the connection then close it right away (could not find a refuse/reject function)
+	 * we are at capacity when there are 4 connections since one must always be with the server
+	 */
+
+	if (open_connections_size >= max_connections_allowed + 1)
+	{
+		cout << "error Cannot accept the new connection, more than 3 open connections is not allowed!" << endl;
+		/*
+		 * write an errorr message to the client
+		 */
+		std::string errorMessage = "message Your connection was refused, the host had 3 open connections already!";
+		size_t bufLength = strlen(errorMessage.c_str());
+		if (-1 == write(newfd,errorMessage.c_str(),bufLength))
+		{
+			cout << "failed to send: " << strerror(errno) << endl;
+		}
+		if (-1 == close(newfd))
+		{
+			cout << "failed to close the socket" << strerror(errno) << endl;
+		}
+		return -1;
+	}
+
 	struct sockaddr_in* address = (struct sockaddr_in*)&newaddr;
 	struct node* newNode = new struct node;
+
 	/*
 	 * sysout some info about the new accept
 	 */
@@ -737,6 +813,13 @@ int blockAndAccept()
 		cout << "failed to get port and ip:" << endl;
 		return -1;
 	}
+	/*
+	if (isContained(newNode->address,newNode->port,open_connections_head) == 0)
+	{
+		"connection already exists.. refusing the connections" << endl;
+		return -1;
+	}
+	*/
 	//cout << "accepting a new connection" << endl;
 	//cout << "starting to insert" << endl;
 	if (open_connections_head == NULL)
@@ -754,7 +837,8 @@ int blockAndAccept()
 	newNode->fd = newfd;
 	newNode->addr = newaddr;
 	newNode->next = NULL;
-
+	open_connections_size++;
+	cout << open_connections_size << endl;
 	cout << "finished accepting and inserting" << endl;
 	return newfd;
 }
@@ -765,9 +849,19 @@ int getPortAndIp(node* theNode, int fd)
    peer_len = sizeof(peer);
    if (getpeername(fd,(struct sockaddr*)&peer, &peer_len) == -1)
    {
-	  cout << "failed to getpeername" << endl;
+	  cout << "failed to getpeername: " << strerror(errno) << endl;
 	  return -1;
    }
+
+   int hostBufLength = 255;
+   char *hostBuffer = new char[hostBufLength];
+   if (-1 == getnameinfo((sockaddr*)&peer, peer_len, hostBuffer, hostBufLength, NULL, 0, 0))
+   {
+	   cout << "failed to get name info: " << strerror(errno) << endl;
+	   return -1;
+   }
+
+
    /* all of this code to get the port*/
    u_short shorty = ntohs(peer.sin_port);
    std::stringstream ss;
@@ -775,18 +869,12 @@ int getPortAndIp(node* theNode, int fd)
    std::string s = ss.str();
    theNode->port = s.c_str();
    /* end of code to get the port into a char[]*/
-
+   theNode->hostname = hostBuffer;
    theNode->address = inet_ntoa(peer.sin_addr);
 
-   cout << "Peer address on fd " << fd << " is: " << theNode->address << ":" << theNode->port<< endl;
+   cout << "Peer address on fd " << fd << " is: " << theNode->address << ":" << theNode->port << " with name: "<< hostBuffer << endl;
    return 0;
 }
-int registerWithServer()
-{
-
-	return 0;
-}
-
 void printPort()
 {
         cout << "listening on port " << port_number << endl;
@@ -803,13 +891,30 @@ void printCreator()
 
 void printHelp()
 {
-        cout << "print all the commands here, so that dumb people can see" << endl;
+		cout <<"creator" << endl;
+		cout << "--->displays info about the author of this program" << endl << endl;
+		cout << "myip" << endl;
+		cout << "--->prints out the ip address of the process" << endl << endl;
+		cout << "myport" << endl;
+		cout << "--->prints out the listening port number of the process" << endl << endl;
+		cout << "register <hostname or address> <port>" << endl;
+		cout << "--->client only. registers client to server. first command that must be ran by all clients" << endl << endl;
+		cout << "connect <hostname or address> <port>" << endl;
+		cout << "--->client only. connect to a peer process with a new TCP socket connection" << endl << endl;
+		cout << "terminate <connectionID>" << endl;
+		cout << "--->close the TCP socket connection with the given connectionID" << endl << endl;
+		cout << "send <connectionID> <message>" << endl;
+		cout << "--->write a message to the given connectionID" << endl << endl;
+		cout << "exit" << endl;
+		cout << "--->ends the program after closing all existing connections" << endl << endl;
+		cout << "list" << endl;
+		cout << "--->lists all of the information about each open connection" << endl << endl;
 }
 
 /*
  * send an updated list of valid connectons to each valid client
  */
-int updateClientsList()
+int updateAndSendValidList()
 {
 	cout << "updating valid connections for all clients..." << endl;
 	/*
@@ -833,22 +938,17 @@ int updateClientsList()
 	/*
 	 * write to each socket pipe with the constructed string
 	 */
-	cout << "send buf out" << endl;
-	cout << "buffer is:" << buf << endl;
 	node* head = open_connections_head;
 	while (head != NULL)
 	{
-		cout << "Writing to the fd:" << head->fd << "..." << endl;
 		if (-1 == write(head->fd,buf,1023))
 		{
 			cout << "failed to write list out to: " << head->fd << endl;
-		}
-		else
-		{
-			cout << "successfully wrote to " << head->fd << " with message: " << buf << endl;
+			return -1;
 		}
 		head = head->next;
 	}
+	cout << "successfully updated all of the clients' valid address lists" << endl;
 	return 0;
 }
 
@@ -857,6 +957,8 @@ int appendNodeToString(char* buf, node* value)
 	strcat(buf,value->address.c_str());
 	strcat(buf," ");
 	strcat(buf,value->port.c_str());
+	strcat(buf," ");
+	strcat(buf,value->hostname.c_str());
 	strcat(buf," ");
 	cout << buf<< endl;
 	return 0;
@@ -906,7 +1008,7 @@ int buildUpdatedValidList(char*** buf)
 	int i = 1;
 	struct node* currentNode = NULL;
 	char ** tokens = *buf;
-	while (tokens[i] != NULL && tokens[i+1] != NULL)
+	while (tokens[i] != NULL && tokens[i+1] && tokens[i+2] != NULL)
 	{
 		if (valid_connections_head == NULL)
 		{
@@ -920,8 +1022,8 @@ int buildUpdatedValidList(char*** buf)
 		}
 		currentNode->address = tokens[i];
 		currentNode->port = tokens[i+1];
-
-		i = i + 2;
+		currentNode->hostname = tokens[i+2];
+		i = i + 3;
 	}
 	currentNode = NULL;
 	return 0;
@@ -934,7 +1036,7 @@ void printValidList()
 	cout << "=====================================" << endl;
 	while (head != NULL)
 	{
-		cout << "Address: " << head->address << ", Port: " << head->port << endl;
+		cout << "Hostname: "<<  head->hostname << ", Address: " << head->address << ", Port: " << head->port << endl;
 		head = head->next;
 	}
 	cout << "=====================================" << endl;
@@ -948,6 +1050,7 @@ void printOpenList()
 	while (head != NULL)
 	{
 		cout <<"ConnectID:" << head->id;
+		cout << " hostname: " << head->hostname;
 		cout <<" address: " << head->address;
 		cout <<" port: " << head->port << endl;
 		head = head->next;
@@ -955,22 +1058,18 @@ void printOpenList()
 	cout << "=====================================" << endl;
 }
 
-int isAlreadyConnected(std::string address,std::string port)
+int isContained(std::string address,std::string port,struct node* head)
 {
-	struct node* head = open_connections_head;
-
 	/*
 	 *TODO check to see if connected to self as a base case
 	 */
 
-
-	cout << "starting to check if it's already connected to this port/address" << endl;
+	//cout << "starting to check if it's already connected to this port/address" << endl;
 	while (head != NULL)
 	{
 
-		if (address == head->address && port == head->port)
+		if ((address == head->address || address == head->hostname) && port == head->port)
 		{
-			cout << "failure..." << endl;
 			/*
 			 * if we enter this block, then the connection already existed.
 			 */
@@ -978,13 +1077,12 @@ int isAlreadyConnected(std::string address,std::string port)
 		}
 		head = head->next;
 	}
-	cout << "success, beginning to connect..." << endl;
+	//cout << "success, beginning to connect..." << endl;
 	return 0;
 }
-
 int closeSocketAndDeleteNode(struct node* deleteeNode)
 {
-	cout << "starting to deleteNode" << endl;
+	//cout << "starting to deleteNode" << endl;
 	/*
 	 * close the socket
 	 * write a function that closes the socket, removes the open connection from the list of connections
@@ -992,17 +1090,16 @@ int closeSocketAndDeleteNode(struct node* deleteeNode)
 	 */
 	struct node* head = open_connections_head;
 	struct node* previous = NULL;
-
 	/*
 	 * check to see if the head is the deletee, if so, then set him to be the next element in the list b/c no one else is pointing to him
 	 */
-	cout << "checking if its the head" << endl;
+	//cout << "checking if its the head" << endl;
 	if (head == deleteeNode)
 	{
 		open_connections_head = open_connections_head->next;
 		head = NULL;
 	}
-	cout << "checking everything else..." << endl;
+	//cout << "checking everything else..." << endl;
 	while (head != NULL)
 	{
 		if (head == deleteeNode)
