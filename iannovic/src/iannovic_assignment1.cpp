@@ -888,7 +888,7 @@ int getPortAndIp(node* theNode, int fd)
    theNode->hostname = hostBuffer;
    theNode->address = inet_ntoa(peer.sin_addr);
    delete hostBuffer;
-   cout << "Peer address on fd " << fd << " is: " << theNode->address << ":" << theNode->port << " with name: "<< hostBuffer << endl;
+   cout << "Peer address on fd " << fd << " is: " << theNode->address << ":" << theNode->port << " with name: "<< theNode->hostname << endl;
    return 0;
 }
 void printPort()
