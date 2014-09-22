@@ -1044,7 +1044,10 @@ void printValidList()
 	cout << "=====================================" << endl;
 	while (head != NULL)
 	{
-		cout << "Hostname: "<<  head->hostname << ", Address: " << head->address << ", Port: " << head->port << endl;
+		cout <<" wambam" << endl;
+		cout << "Hostname: "	<< head->hostname;
+		cout << ", Address: " 	<< head->address;
+		cout << ", Port: " 		<< head->port 	<< endl;
 		head = head->next;
 		cout << "updated the pointer" << endl;
 	}
