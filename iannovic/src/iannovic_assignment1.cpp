@@ -1046,6 +1046,7 @@ void printValidList()
 	{
 		cout << "Hostname: "<<  head->hostname << ", Address: " << head->address << ", Port: " << head->port << endl;
 		head = head->next;
+		cout << "updated the pointer" << endl;
 	}
 	cout << "=====================================" << endl;
 }
