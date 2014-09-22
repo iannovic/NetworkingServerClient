@@ -439,6 +439,10 @@ int main(int argc, char **argv)
 					{
 						cout << "failed to connect" << endl;
 					}
+					else
+					{
+						printOpenList();
+					}
 				}
 			}
 			else if (arg[0].compare("terminate") == 0)
@@ -480,6 +484,16 @@ int main(int argc, char **argv)
 						cout << "Failed to delete and close socket connection" << endl;
 						return -1;
 					}
+				}
+
+				if (-1 == closeSocketAndDeleteNode(listening_socket))
+				{
+					cout << "Failed to close listening socket on port " << port_number << endl;
+					return -1;
+				}
+				else
+				{
+					cout << "Successfully closed the listening socket on port " << port_number	<< endl;
 				}
 				cout << "gracefully closing the program" << endl;
 				return -1;
