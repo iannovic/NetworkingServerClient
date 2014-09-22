@@ -84,8 +84,8 @@ int createRfds(fd_set *rfds);
 int appendNodeToString(char* buf, node* value);
 int getAddressInfo(std::string port, std::string address);
 int getPortAndIp(node* theNode, int fd);
-int buildUpdatedValidList(char*** buf);
-int tokenizeBufferedMessage(char *buf, char ***tokens, int maxTokens,int *tokenCount);
+int buildUpdatedValidList(char** buf);
+int tokenizeBufferedMessage(char *buf, char **tokens, int maxTokens,int *tokenCount);
 int getNodeById(struct node **ret, int id);
 int isContained(std::string address, std::string port, struct node *head);
 int closeSocketAndDeleteNode(struct node* deleteeNode);
@@ -206,52 +206,51 @@ int main(int argc, char **argv)
 				if (FD_ISSET(head->fd,&rfds))
 				{
 					cout << "found input on socket: " << head->fd << endl;
-					char buf[1024] = {0};
+					int bufLength = 256;
+					char buf[256] = {0};
 					size_t t;
 					ssize_t t2;
-					t2 = recv(head->fd,&buf,1023,0);
+					t2 = recv(head->fd,&buf,256,0);
 					if (t2 == -1)
 					{
 						cout << "failed to receive the message " << buf << endl;
 					}
 					else if (t2 == 0)
 					{
-
 						cout << "the process at " << head->hostname << " has closed their socket" << endl;
 						cout << "Sender's Address: " << head->address << endl;
 						cout << "Sender's Port: " << head->port << endl;
 
 						closeSocketAndDeleteNode(head);
+
 						if (!isClient)
 						{
 							updateAndSendValidList();
 						}
-						/*
-						 * close the socket
-						 * write a function that closes the socket, removes the open connection from the list of connections
-						 * updates the size of the list
-						 */
 					}
 					else
 					{
+						cout << buf << endl;
 						int maxTokens = 32;
 						int tokenCount = 0;
-						char **tokens = new char*[maxTokens];
-						if (-1 == tokenizeBufferedMessage(buf,&tokens,maxTokens,&tokenCount))
+						char *tokens[maxTokens];
+						cout << "initialized buffer" << endl;
+						if (-1 == tokenizeBufferedMessage(buf,(char**)&tokens,maxTokens,&tokenCount))
 						{
 							cout << "failed to tokenize the buffer" << endl;
 							return -1;
 						}
+						cout << "made it passed tokenizing" << endl;
 						if (tokenCount < 1)
 						{
 							cout << "too little tokens from the message..." << endl;
 							//return -1;
 						}
-						//cout << "determining what function to run" << endl;
+						cout << "determining what function to run" << endl;
 						std::string command = tokens[0];
 						if (command.compare("update") == 0)
 						{
-							/*
+							cout << "attempting to build a new list" << endl;
 							if (tokenCount < 3)
 							{
 								cout << "not enough tokens to run this command" << endl;
@@ -262,12 +261,12 @@ int main(int argc, char **argv)
 								cout << "server should not run this command" << endl;
 								return -1;
 							}
-							if (1 == buildUpdatedValidList(&tokens))
+							cout << "now building list" << endl;
+							if (1 == buildUpdatedValidList((char**)&tokens))
 							{
 								cout << "failed to build the valid connections list" << endl;
 								return -1;
 							}
-							*/
 							cout << "Valid connections have been updated by the server..." << endl;
 							printValidList();
 						}
@@ -927,7 +926,7 @@ int updateAndSendValidList()
 
 	size_t maxBufLength = 256;
 	char *buf = new char[maxBufLength];
-	//bzero(buf,1024);
+	bzero(buf,256);
 
 	/*
 	 * add "update" header to beginning of the string
@@ -956,6 +955,7 @@ int updateAndSendValidList()
 	}
 	cout << "successfully updated all of the clients' valid address lists" << endl;
 	delete buf;
+	buf = NULL;
 	return 0;
 }
 
@@ -970,10 +970,10 @@ int appendNodeToString(char* buf, node* value)
 	cout << buf<< endl;
 	return 0;
 }
-int tokenizeBufferedMessage(char *buf, char ***tokens,int maxTokens,int *tokenCount)
+int tokenizeBufferedMessage(char *buf, char **tokens,int maxTokens,int *tokenCount)
 {
 	char *token = strtok(buf," ");
-	char **localTokens = *tokens;
+	char **localTokens = tokens;
 	int i = 0;
 
 	/*
@@ -989,19 +989,19 @@ int tokenizeBufferedMessage(char *buf, char ***tokens,int maxTokens,int *tokenCo
 		}
 
 		//cout << "token: " << token << endl;
-		localTokens[i] = new char[strlen(token)];
-		strcpy(localTokens[i],token);
+		localTokens[i] = token;
+		//strcpy(localTokens[i],token);
 		token = strtok(NULL," ");
 		i++;
 	}
-
 	//set the number of tokens counted
 	*tokenCount = i;
+	localTokens[*tokenCount] = NULL;
 
 	//cout << "completed tokenizing" << endl;
 	return 0;
 }
-int buildUpdatedValidList(char*** buf)
+int buildUpdatedValidList(char** buf)
 {
 	/*
 	 * this will leak a lot of memory for now. @TODO fix this
@@ -1014,9 +1014,10 @@ int buildUpdatedValidList(char*** buf)
 	 */
 	int i = 1;
 	struct node* currentNode = NULL;
-	char ** tokens = *buf;
+	char ** tokens = buf;
 	while (tokens[i] != NULL && tokens[i+1] && tokens[i+2] != NULL)
 	{
+		cout << "iterating.. index is "	<< i << endl;
 		if (valid_connections_head == NULL)
 		{
 			currentNode = new struct node;
