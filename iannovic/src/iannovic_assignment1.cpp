@@ -236,7 +236,7 @@ int main(int argc, char **argv)
 					{
 						int maxTokens = 32;
 						int tokenCount = 0;
-						char **tokens = new char*[32];
+						char **tokens = new char*[maxTokens];
 						if (-1 == tokenizeBufferedMessage(buf,&tokens,maxTokens,&tokenCount))
 						{
 							cout << "failed to tokenize the buffer" << endl;
@@ -251,6 +251,7 @@ int main(int argc, char **argv)
 						std::string command = tokens[0];
 						if (command.compare("update") == 0)
 						{
+							/*
 							if (tokenCount < 3)
 							{
 								cout << "not enough tokens to run this command" << endl;
@@ -266,6 +267,7 @@ int main(int argc, char **argv)
 								cout << "failed to build the valid connections list" << endl;
 								return -1;
 							}
+							*/
 							cout << "Valid connections have been updated by the server..." << endl;
 							printValidList();
 						}
@@ -685,6 +687,7 @@ int connectTo(std::string address, std::string port,int flag)
 		cout << "a new connection has succesfully been opened!" << endl;
 	}
 	open_connections_size++;
+	delete buf;
 	return 0;
 }
 int insertNode(struct node* head,struct node* newNode)
@@ -871,7 +874,7 @@ int getPortAndIp(node* theNode, int fd)
    /* end of code to get the port into a char[]*/
    theNode->hostname = hostBuffer;
    theNode->address = inet_ntoa(peer.sin_addr);
-
+   delete hostBuffer;
    cout << "Peer address on fd " << fd << " is: " << theNode->address << ":" << theNode->port << " with name: "<< hostBuffer << endl;
    return 0;
 }
@@ -921,8 +924,10 @@ int updateAndSendValidList()
 	 * construct the string to write to each socket connection
 	 */
 	node* head2 = open_connections_head;
-	char *buf = new char[1024];
-	bzero(buf,1024);
+
+	size_t maxBufLength = 256;
+	char *buf = new char[maxBufLength];
+	//bzero(buf,1024);
 
 	/*
 	 * add "update" header to beginning of the string
@@ -941,14 +946,16 @@ int updateAndSendValidList()
 	node* head = open_connections_head;
 	while (head != NULL)
 	{
-		if (-1 == write(head->fd,buf,1023))
+		if (-1 == write(head->fd,buf,maxBufLength - 1))
 		{
 			cout << "failed to write list out to: " << head->fd << endl;
+			delete buf;
 			return -1;
 		}
 		head = head->next;
 	}
 	cout << "successfully updated all of the clients' valid address lists" << endl;
+	delete buf;
 	return 0;
 }
 
