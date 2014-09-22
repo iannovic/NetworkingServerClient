@@ -1031,6 +1031,7 @@ int buildUpdatedValidList(char** buf)
 		currentNode->address = tokens[i];
 		currentNode->port = tokens[i+1];
 		currentNode->hostname = tokens[i+2];
+		currentNode->next = NULL;
 		i = i + 3;
 	}
 	currentNode = NULL;
@@ -1044,12 +1045,10 @@ void printValidList()
 	cout << "=====================================" << endl;
 	while (head != NULL)
 	{
-		cout <<" wambam" << endl;
 		cout << "Hostname: "	<< head->hostname;
 		cout << ", Address: " 	<< head->address;
 		cout << ", Port: " 		<< head->port 	<< endl;
 		head = head->next;
-		cout << "updated the pointer" << endl;
 	}
 	cout << "=====================================" << endl;
 }
