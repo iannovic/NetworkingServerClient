@@ -640,6 +640,12 @@ int connectTo(std::string address, std::string port,int flag)
 	 *
 	 * this works the opposite way for the open_connections because we want to check for duplicates
 	 */
+
+	if (flag == 0 && isContained(address,port,open_connections_head) == -1)
+	{
+		cout << "you cannot register with the server again!" << endl;
+	}
+
 	if (flag == 1 && isContained(address,port,valid_connections_head) == 0)
 	{
 		cout << "The address you are trying to connect to is not registered and validated." << endl;
@@ -1165,6 +1171,10 @@ int closeSocketAndDeleteNode(struct node* deleteeNode)
 		if (head == deleteeNode)
 		{
 			previous->next = head->next;
+			if (open_connections_tail == head)
+			{
+				open_connections_tail = previous;
+			}
 			break;
 		}
 		previous = head;
