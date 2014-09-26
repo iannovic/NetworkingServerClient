@@ -190,7 +190,6 @@ int main(int argc, char **argv)
 			else
 			{
 				cout << "accepted a new connection!" << endl;
-				printOpenList();
 			}
 		}
 
@@ -288,14 +287,71 @@ int main(int argc, char **argv)
 						{
 							cout << "failed to set port, not enough tokens" << endl;
 						}
-						head->port = tokens[1];
-						if (!isClient && updateAndSendValidList() == -1)
+						else if (!isClient)
+						{
+							if (isContained(head->address,tokens[1],open_connections_head) == -1)
+							{
+								cout << "DANGER!! the peer trying to connect has already connected to you, closing the connection" << endl;
+								/*
+								 * write an errorr message to the client
+								 */
+								std::string errorMessage = "message Your connection was refused, you are already connected to me on another port/socket!";
+								size_t bufLength = strlen(errorMessage.c_str());
+								if (-1 == write(head->fd,errorMessage.c_str(),bufLength))
+								{
+									cout << "failed to send: " << strerror(errno) << endl;
+								}
+								closeSocketAndDeleteNode(head);
+								if (-1 == close(head->fd))
+								{
+									cout << "failed to close the socket" << strerror(errno) << endl;
+								}
+							}
+							else
+							{
+								/*
+								 * move the value of tokens[1] into the head->port. we only do this now because we had to validate that it did not exist
+								 */
+								head->port = tokens[1];
+								if (updateAndSendValidList() == -1)
+								{
+									/*
+									 * we only updateClientList IF we are the server
+									 * otherwise assume that its relevant to the open connections list only
+									 */
+									cout << "failed to update all clients valid list" << endl;
+								}
+								else
+								{
+									printOpenList();
+								}
+							}
+						}
+						else if (isClient && isContained(head->address,tokens[1],valid_connections_head) == 0)
+						{
+							cout << "DANGER!! The peer on this socket is not a validated host. closing the connection immedietely." << endl;
+									/*
+							 * write an errorr message to the client
+							 */
+							std::string errorMessage = "message Your connection was refused, you are not registered to the server";
+							size_t bufLength = strlen(errorMessage.c_str());
+							if (-1 == write(head->fd,errorMessage.c_str(),bufLength))
+							{
+								cout << "failed to send: " << strerror(errno) << endl;
+							}
+							closeSocketAndDeleteNode(head);
+							if (-1 == close(head->fd))
+							{
+								cout << "failed to close the socket" << strerror(errno) << endl;
+							}
+						}
+						else
 						{
 							/*
-							 * we only updateClientList IF we are the server
-							 * otherwise assume that its relavent to the open connections list only
+							 * this will happen if everythign else was successfull and we are the isClient == true
 							 */
-							cout << "failed to update all clients valid list" << endl;
+							head->port = tokens[1];
+							printOpenList();
 						}
 					}
 					/**************************************************************************
@@ -372,6 +428,10 @@ int main(int argc, char **argv)
 				else if (!isClient)
 				{
 					cout << "server is not permitted to send messages" << endl;
+				}
+				else if (arg[1].compare("1") == 0)
+				{
+					cout << "you are not allowed to send a message to the server." << endl;
 				}
 				else if (-1 == getNodeById(&retNode,atoi(arg[1].c_str())))
 				{
@@ -468,6 +528,22 @@ int main(int argc, char **argv)
 				if (argc != 2)
 				{
 					cout << "when using terminate you need 2 arguments, second is the connectID. use list command to find connectionID's" << endl;
+				}
+				else if (arg[1].compare("1") == 0)
+				{
+					cout << "now terminating connection with server and all clients (cannot connect to peers while not connnected to server" << endl;
+					struct node *head = open_connections_head;
+					valid_connections_head = NULL;
+					while (head != NULL)
+					{
+						struct node *deletedNode = head;
+						head = head->next;
+						if (-1 == closeSocketAndDeleteNode(deletedNode))
+						{
+							cout << "Failed to delete and close socket connection" << endl;
+						}
+					}
+
 				}
 				else if (getNodeById(&retNode,id) == -1)
 				{
@@ -822,7 +898,6 @@ int createRfds(fd_set *rfds)
 }
 int blockAndAccept()
 {
-	cout << "starting to accept size is: " << open_connections_size << endl;
 	int newfd;
 	struct sockaddr *newaddr = new struct sockaddr;
 	socklen_t addr_size = sizeof(struct sockaddr);
@@ -869,15 +944,7 @@ int blockAndAccept()
 		cout << "failed to get port and ip:" << endl;
 		return -1;
 	}
-	/*
-	if (isContained(newNode->address,newNode->port,open_connections_head) == 0)
-	{
-		"connection already exists.. refusing the connections" << endl;
-		return -1;
-	}
-	*/
-	//cout << "accepting a new connection" << endl;
-	//cout << "starting to insert" << endl;
+
 	if (open_connections_head == NULL)
 	{
 		open_connections_head = newNode;
@@ -894,8 +961,7 @@ int blockAndAccept()
 	newNode->addr = newaddr;
 	newNode->next = NULL;
 	open_connections_size++;
-	cout << open_connections_size << endl;
-	cout << "finished accepting and inserting" << endl;
+	//cout << "finished accepting and inserting" << endl;
 	return newfd;
 }
 int getPortAndIp(node* theNode, int fd)
@@ -1133,7 +1199,6 @@ int isContained(std::string address,std::string port,struct node* head)
 	//cout << "starting to check if it's already connected to this port/address" << endl;
 	while (head != NULL)
 	{
-
 		if ((address == head->address || address == head->hostname) && port == head->port)
 		{
 			/*
