@@ -722,6 +722,9 @@ int connectTo(std::string address, std::string port,int flag)
 		cout << "failed to send my port to connectee: " << strerror(errno) << endl;
 		return -1;
 	}
+	else {
+		cout << "successfully sent my port to the server" << endl;
+	}
 
 	if (flag == 0)
 	{
