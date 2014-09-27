@@ -662,7 +662,7 @@ int initListen()
 	{
 		cout << "failed to get addr info: " << strerror(errno) << endl;
 		return -1;
-	}m
+	}
 	fd = socket(AF_INET,SOCK_STREAM,0);
 	if (fd == -1)
 	{
