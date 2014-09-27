@@ -29,6 +29,7 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <sys/fcntl.h>
+#include <ifaddrs.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sstream>
@@ -53,6 +54,8 @@ void printOpenList();
 
 //run that server
 int blockAndAccept();
+
+int getExternalIp();
 
 /*
  * the flag is to determine whether registering or connecting
@@ -160,6 +163,11 @@ int main(int argc, char **argv)
 		cout << "failed to open listening socket!" << endl;
 		return -1;
 	}
+	if (-1 == getExternalIp())
+	{
+		cout << "failed to get external ip" << endl;
+		return -1;
+	}
 	cout << ".-*^*-._.-*^*-._.-*^*-._.-*^*-._WELCOME!.-*^*-._.-*^*-._.-*^*-._.-*^*-._" << endl;
 	// add some validation to make sure port is a number
 	while (true)
@@ -172,6 +180,9 @@ int main(int argc, char **argv)
 		}
 		FD_SET(0,&rfds); 	//read on stdin to see when it has input
 
+		/********************************************************************************
+		 * BEGIN THE SELECT() LOOP!
+		 ********************************************************************************/
 		if (select(1024,&rfds,NULL,NULL,NULL) == -1)
 		{
 			cout << "failed to select: " << strerror(errno) << endl;
@@ -639,6 +650,10 @@ int initListen()
 		cout << "failed to get addr info: " << strerror(errno) << endl;
 		return -1;
 	}
+	struct sockaddr_in* tempAddr;//= (sockaddr_in)*response->ai_addr;
+	tempAddr = (sockaddr_in*)response->ai_addr;
+	std::string addresss = inet_ntoa(tempAddr->sin_addr);
+	cout << "Some other stuff:" << addresss << endl;
 	fd = socket(AF_INET,SOCK_STREAM,0);
 	if (fd == -1)
 	{
@@ -1088,7 +1103,7 @@ int appendNodeToString(char* buf, node* value)
 	strcat(buf," ");
 	strcat(buf,value->hostname.c_str());
 	strcat(buf," ");
-	cout << buf<< endl;
+	//cout << buf<< endl;
 	return 0;
 }
 int tokenizeBufferedMessage(char *buf, char **tokens,int maxTokens,int *tokenCount)
@@ -1181,6 +1196,7 @@ void printOpenList()
 	cout << "=====================================" << endl;
 	while (head != NULL)
 	{
+
 		cout <<"ConnectID:" << head->id;
 		cout << " hostname: " << head->hostname;
 		cout <<" address: " << head->address;
@@ -1264,5 +1280,54 @@ int closeSocketAndDeleteNode(struct node* deleteeNode)
 	{
 		cout << "failed to close the socket with connectionID: " << deleteeNode->id << endl;
 	}
+	return 0;
+}
+
+int getExternalIp()
+{
+		struct ifaddrs *ifaddr, *ifa;
+		int family, s, n;
+		char host[NI_MAXHOST];
+
+	   if (getifaddrs(&ifaddr) == -1) {
+		   perror("getifaddrs");
+		   exit(EXIT_FAILURE);
+	   }
+	   void * tmpAddrPtr=NULL;
+       for (ifa = ifaddr, n = 0; ifa != NULL; ifa = ifa->ifa_next, n++) {
+           if (ifa->ifa_addr == NULL)
+               continue;
+
+           family = ifa->ifa_addr->sa_family;
+
+           /* For an AF_INET* interface address, display the address */
+           if (ifa->ifa_addr->sa_family == AF_INET) { // check it is IP4
+			  // is a valid IP4 Address
+			  tmpAddrPtr=&((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
+			  char addressBuffer[INET_ADDRSTRLEN];
+			  inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
+			  printf("%s IP Address %s\n", ifa->ifa_name, addressBuffer);
+		  } else if (ifa->ifa_addr->sa_family == AF_INET6) { // check it is IP6
+			  // is a valid IP6 Address
+			  tmpAddrPtr=&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr;
+			  char addressBuffer[INET6_ADDRSTRLEN];
+			  inet_ntop(AF_INET6, tmpAddrPtr, addressBuffer, INET6_ADDRSTRLEN);
+			  printf("%s IP Address %s\n", ifa->ifa_name, addressBuffer);
+		  }
+           if (family == AF_INET || family == AF_INET6) {
+               s = getnameinfo(ifa->ifa_addr,
+                       (family == AF_INET) ? sizeof(struct sockaddr_in) :
+                                             sizeof(struct sockaddr_in6),
+                       host, NI_MAXHOST,
+                       NULL, 0, NI_NUMERICHOST);
+               if (s != 0) {
+                   printf("getnameinfo() failed: %s\n", gai_strerror(s));
+                   exit(EXIT_FAILURE);
+               }
+
+               printf("\t\taddress: <%s>\n", host);
+
+           }
+       }
 	return 0;
 }
