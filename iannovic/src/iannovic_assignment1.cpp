@@ -43,6 +43,8 @@ void printPort();
 //prints CREATOR statement
 void printCreator();
 
+void printExternalIp();
+
 //print the Help command
 void printHelp();
 
@@ -422,6 +424,13 @@ int main(int argc, char **argv)
 			else if (arg[0].compare("creator") == 0)
 			{
 					printCreator();
+			}
+			/*************************************************************************
+			 * MYIP COMMAND
+			 *************************************************************************/
+			else if (arg[0].compare("myip") == 0)
+			{
+					printExternalIp();
 			}
 			/*************************************************************************
 			 * HELP COMMAND
@@ -1334,4 +1343,9 @@ int getExternalIp()
            }
        }
 	return 0;
+}
+
+void printExternalIp()
+{
+	cout << "Your external IP is: " << listening_socket->address << endl;
 }
