@@ -662,11 +662,7 @@ int initListen()
 	{
 		cout << "failed to get addr info: " << strerror(errno) << endl;
 		return -1;
-	}
-	struct sockaddr_in* tempAddr;//= (sockaddr_in)*response->ai_addr;
-	tempAddr = (sockaddr_in*)response->ai_addr;
-	std::string addresss = inet_ntoa(tempAddr->sin_addr);
-	cout << "Some other stuff:" << addresss << endl;
+	}m
 	fd = socket(AF_INET,SOCK_STREAM,0);
 	if (fd == -1)
 	{
@@ -1338,7 +1334,7 @@ int getExternalIp()
 			  if (strcmp(ifa->ifa_name,"eth0") == 0)
 			  {
 				  listening_socket->address = addressBuffer;
-				  cout << listening_socket->address << endl;
+				  //cout << listening_socket->address << endl;
 			  }
            }
        }
