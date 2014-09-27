@@ -163,6 +163,10 @@ int main(int argc, char **argv)
 		cout << "failed to open listening socket!" << endl;
 		return -1;
 	}
+
+	/*
+	 * populate listening_socket->address field with the external IP
+	 */
 	if (-1 == getExternalIp())
 	{
 		cout << "failed to get external ip" << endl;
@@ -731,7 +735,11 @@ int connectTo(std::string address, std::string port,int flag)
 	 *
 	 * this works the opposite way for the open_connections because we want to check for duplicates
 	 */
-
+	if (isContained(address,port,listening_socket) == -1)
+	{
+		cout << "you cannot connect to yourself" << endl;
+		return -1;
+	}
 	if (flag == 0 && isContained(address,port,open_connections_head) == -1)
 	{
 		cout << "you cannot register with the server again!" << endl;
@@ -1285,48 +1293,44 @@ int closeSocketAndDeleteNode(struct node* deleteeNode)
 
 int getExternalIp()
 {
+	/*
+	 * this portion of code was taken from the man page of getifaddrs(3)
+	 * http://man7.org/linux/man-pages/man3/getifaddrs.3.html
+	 *
+	 */
 		struct ifaddrs *ifaddr, *ifa;
-		int family, s, n;
+		int family, n;
 		char host[NI_MAXHOST];
 
-	   if (getifaddrs(&ifaddr) == -1) {
-		   perror("getifaddrs");
-		   exit(EXIT_FAILURE);
+	   if (getifaddrs(&ifaddr) == -1)
+	   {
+		   cout << "failed to getifaddrs: " << strerror(errno) << endl;
+		   return -1;
 	   }
 	   void * tmpAddrPtr=NULL;
-       for (ifa = ifaddr, n = 0; ifa != NULL; ifa = ifa->ifa_next, n++) {
+       for (ifa = ifaddr, n = 0; ifa != NULL; ifa = ifa->ifa_next, n++)
+       {
            if (ifa->ifa_addr == NULL)
+           {
                continue;
+           }
 
            family = ifa->ifa_addr->sa_family;
 
            /* For an AF_INET* interface address, display the address */
-           if (ifa->ifa_addr->sa_family == AF_INET) { // check it is IP4
-			  // is a valid IP4 Address
+           if (ifa->ifa_addr->sa_family == AF_INET)
+           {
+        	   // check it is IP4
 			  tmpAddrPtr=&((struct sockaddr_in *)ifa->ifa_addr)->sin_addr;
 			  char addressBuffer[INET_ADDRSTRLEN];
+
 			  inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
-			  printf("%s IP Address %s\n", ifa->ifa_name, addressBuffer);
-		  } else if (ifa->ifa_addr->sa_family == AF_INET6) { // check it is IP6
-			  // is a valid IP6 Address
-			  tmpAddrPtr=&((struct sockaddr_in6 *)ifa->ifa_addr)->sin6_addr;
-			  char addressBuffer[INET6_ADDRSTRLEN];
-			  inet_ntop(AF_INET6, tmpAddrPtr, addressBuffer, INET6_ADDRSTRLEN);
-			  printf("%s IP Address %s\n", ifa->ifa_name, addressBuffer);
-		  }
-           if (family == AF_INET || family == AF_INET6) {
-               s = getnameinfo(ifa->ifa_addr,
-                       (family == AF_INET) ? sizeof(struct sockaddr_in) :
-                                             sizeof(struct sockaddr_in6),
-                       host, NI_MAXHOST,
-                       NULL, 0, NI_NUMERICHOST);
-               if (s != 0) {
-                   printf("getnameinfo() failed: %s\n", gai_strerror(s));
-                   exit(EXIT_FAILURE);
-               }
 
-               printf("\t\taddress: <%s>\n", host);
-
+			  if (strcmp(ifa->ifa_name,"eth0") == 0)
+			  {
+				  listening_socket->address = addressBuffer;
+				  cout << listening_socket->address << endl;
+			  }
            }
        }
 	return 0;
